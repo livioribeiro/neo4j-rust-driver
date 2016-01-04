@@ -1,0 +1,8 @@
+[package]
+name = "neo4j-rust-driver"
+version = "0.1.0"
+authors = ["Livio Ribeiro <livioribeiro@outlook.com>"]
+
+[dependencies]
+byteorder = "0.4"
+log = "0.3"
