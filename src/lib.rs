@@ -4,6 +4,7 @@ extern crate byteorder;
 extern crate log;
 
 pub mod v1;
+pub mod packstream;
 
 use std::io::prelude::*;
 use std::io::Cursor;
