@@ -6,3 +6,6 @@ authors = ["Livio Ribeiro <livioribeiro@outlook.com>"]
 [dependencies]
 byteorder = "0.4"
 log = "0.3"
+
+[dev-dependencies]
+env_logger = "0.3"

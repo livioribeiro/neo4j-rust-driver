@@ -3,25 +3,37 @@ extern crate byteorder;
 #[macro_use]
 extern crate log;
 
+pub mod v1;
+
 use std::io::prelude::*;
 use std::io::Cursor;
 use std::net::{TcpStream, Shutdown};
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 
+use v1::Connection;
+
+const PREAMBLE: [u8; 4] = [0x60, 0x60, 0xB0, 0x17];
+const SUPPORTED_VERSIONS: [u32; 4] = [1, 0, 0, 0];
+
 /// Connect and perform a handshake in order to return a valid
 /// Connection object if a protocol version can be agreed.
-pub fn connect(host: &str, port: u16) -> Result<u32, ()> {
+pub fn connect(host: &str, port: u16) -> Result<Connection, ()> {
     info!("Creating connection to {} on port {}", host, port);
 
     let mut stream = TcpStream::connect((host, port)).unwrap();
-    let supported_version: [u32; 4] = [1, 0, 0, 0];
-    info!("Supported protocols are: {:?}", &supported_version);
+    info!("Supported protocols are: {:?}", &SUPPORTED_VERSIONS);
 
     let data = {
         let mut data = Cursor::new(vec![0u8; (4 * 4)]);
-        for v in supported_version.iter() {
+
+        for i in PREAMBLE.iter() {
+            data.write_u8(*i).unwrap();
+        }
+
+        for v in SUPPORTED_VERSIONS.iter() {
             data.write_u32::<BigEndian>(*v).unwrap();
         }
+
         data.into_inner()
     };
 
@@ -45,11 +57,10 @@ pub fn connect(host: &str, port: u16) -> Result<u32, ()> {
     }
 
     info!("Protocol version {} agreed", agreed_version);
-    Ok(agreed_version)
+    Ok(Connection::new(stream))
 }
 
 #[test]
 fn connection() {
-    let protocol_version = connect("localhost", 7687).unwrap();
-    assert_eq!(1, protocol_version);
+    let mut conn = connect("localhost", 7687).unwrap();
 }
