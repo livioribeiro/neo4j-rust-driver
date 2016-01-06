@@ -4,7 +4,6 @@ extern crate byteorder;
 extern crate log;
 
 pub mod v1;
-pub mod packstream;
 
 use std::io::prelude::*;
 use std::io::Cursor;
@@ -64,4 +63,5 @@ pub fn connect(host: &str, port: u16) -> Result<Connection, ()> {
 #[test]
 fn connection() {
     let mut conn = connect("localhost", 7687).unwrap();
+    conn.init("rust-driver/0.1");
 }

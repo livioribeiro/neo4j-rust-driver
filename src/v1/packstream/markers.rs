@@ -73,3 +73,6 @@ marker! { STRUCT_16 = 0xD9 }
 pub const USE_TINY_STRUCT: u16 = 15;
 pub const USE_STRUCT_8: u16 = 255;
 pub const USE_STRUCT_16: u16 = 65_535;
+
+// End marker
+pub const END: u16 = 0x00_00;

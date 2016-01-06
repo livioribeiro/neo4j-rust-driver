@@ -2,6 +2,9 @@ use std::io::prelude::*;
 use std::net::TcpStream;
 // use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 
+pub mod packstream;
+pub mod transport;
+
 pub struct Connection {
     socket: TcpStream,
 }
