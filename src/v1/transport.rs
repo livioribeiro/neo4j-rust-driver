@@ -12,6 +12,7 @@ pub struct ChunkedStream {
     output_size: usize,
 }
 
+// based on https://github.com/neo4j/neo4j-python-driver/blob/1.0/neo4j/v1/connection.py
 impl ChunkedStream {
     pub fn new(socket: TcpStream) -> Self {
         ChunkedStream {
@@ -21,11 +22,8 @@ impl ChunkedStream {
             output_size: 0,
         }
     }
-}
 
-// based on https://github.com/neo4j/neo4j-python-driver/blob/1.0/neo4j/v1/connection.py
-impl Write for ChunkedStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    pub fn write(&mut self, buf: &[u8]) -> io::Result<()> {
         let mut b = buf;
 
         loop {
@@ -39,7 +37,7 @@ impl Write for ChunkedStream {
                 }
                 self.output_size = MAX_CHUNK_SIZE;
                 b = &b[end..size];
-                try!(self.flush());
+                try!(self.flush(false));
             } else {
                 for i in b.iter() {
                     self.output_buffer.push(*i);
@@ -49,15 +47,22 @@ impl Write for ChunkedStream {
             }
         }
 
-        Ok(buf.len())
+        Ok(())
     }
 
-    fn flush(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self, end_of_message: bool) -> io::Result<()> {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
         if self.output_buffer.len() > 0 {
-            let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
             try!(buf.write_u16::<BigEndian>(self.output_size as u16));
             try!(buf.write_all(self.output_buffer.as_ref()));
+        }
 
+        if end_of_message {
+            try!(buf.write(&[0x00, 0x00]));
+        }
+
+        if buf.get_ref().len() > 0 {
             try!(self.raw.write_all(buf.into_inner().as_ref()));
             try!(self.raw.flush());
 
@@ -65,6 +70,18 @@ impl Write for ChunkedStream {
             self.output_size = 0;
         }
 
+        Ok(())
+    }
+
+    pub fn send(&mut self) -> io::Result<()> {
+        try!(self.socket.write_all(self.raw.get_ref()));
+
+        debug!("C:{}", self.raw.get_ref().iter().fold(
+            String::new(), |acc, i| format!("{} {}", acc, i)
+        ));
+        
+        self.raw.get_mut().clear();
+        self.raw.set_position(0);
         Ok(())
     }
 }
