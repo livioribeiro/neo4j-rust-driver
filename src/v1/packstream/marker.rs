@@ -10,6 +10,8 @@ marker! { TRUE = 0xC3 }
 marker! { FALSE = 0xC2 }
 
 // Integer
+pub const TINY_INT_NEG_NIBBLE: u8 = 0b1111_0000;
+
 marker! { INT_8 = 0xC8 }
 marker! { INT_16 = 0xC9 }
 marker! { INT_32 = 0xCA }
@@ -28,6 +30,11 @@ pub const RANGE_NEG_INT_64: (i64, i64) = (-9_223_372_036_854_775_808, -2_147_483
 // Float
 marker! { FLOAT = 0xC1 }
 
+pub const FLOAT_SIGN_MASK: u64 = 0x8000000000000000;
+pub const FLOAT_EXPONENT_MASK: u64 = 0x7FF0000000000000;
+pub const FLOAT_MANTISSA_MASK: u64 = 0x000FFFFFFFFFFFFF;
+
+
 // String
 pub const TINY_STRING_NIBBLE: u8 = 0b1000_0000;
 
@@ -35,10 +42,10 @@ marker! { STRING_8 = 0xD0 }
 marker! { STRING_16 = 0xD1 }
 marker! { STRING_32 = 0xD2 }
 
-pub const USE_TINY_STRING: u16 = 15;
-pub const USE_STRING_8: u16 = 255;
-pub const USE_STRING_16: u16 = 65_535;
-pub const USE_STRING_32: u32 = 4_294_967_295;
+pub const USE_TINY_STRING: usize = 15;
+pub const USE_STRING_8: usize = 255;
+pub const USE_STRING_16: usize = 65_535;
+pub const USE_STRING_32: usize = 4_294_967_295;
 
 // List
 pub const TINY_LIST_NIBBLE: u8 = 0b1001_0000;

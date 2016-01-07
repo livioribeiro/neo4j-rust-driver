@@ -1,4 +1,6 @@
-use super::packstream::markers;
+use byteorder;
+
+use super::packstream::marker;
 
 const INIT_SIG: u8 = 0x01;
 
@@ -13,10 +15,11 @@ impl Init {
         }
     }
 
-    pub fn encode(self) -> Vec<u8> {
-        let struct_marker = markers::TINY_STRUCT_NIBBLE + 1;
+    pub fn encode(self) -> Result<Vec<u8>, byteorder::Error> {
+        let struct_marker = marker::TINY_STRUCT_NIBBLE + 1;
+        let mut data = try!(super::packstream::encode(&self.client_name));
         let mut message = vec![struct_marker, INIT_SIG];
-        message.append(&mut Vec::from(self.client_name.as_bytes()));
-        message
+        message.append(&mut data);
+        Ok(message)
     }
 }

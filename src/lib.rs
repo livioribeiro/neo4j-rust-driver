@@ -1,4 +1,5 @@
 extern crate byteorder;
+extern crate rustc_serialize;
 
 #[macro_use]
 extern crate log;
@@ -58,10 +59,4 @@ pub fn connect(host: &str, port: u16) -> Result<Connection, ()> {
 
     info!("Protocol version {} agreed", agreed_version);
     Ok(Connection::new(stream))
-}
-
-#[test]
-fn connection() {
-    let mut conn = connect("localhost", 7687).unwrap();
-    conn.init("rust-driver/0.1");
 }

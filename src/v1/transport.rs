@@ -1,7 +1,7 @@
 use std::io::prelude::*;
 use std::io::{self, Cursor};
 use std::net::TcpStream;
-use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
+use byteorder::{WriteBytesExt, BigEndian};
 
 const MAX_CHUNK_SIZE: usize = 65535;
 

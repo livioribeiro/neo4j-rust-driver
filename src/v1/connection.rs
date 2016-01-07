@@ -1,4 +1,5 @@
 use std::net::TcpStream;
+use byteorder;
 
 use super::transport::ChunkedStream;
 use super::messages::Init;
@@ -14,22 +15,15 @@ impl Connection {
         }
     }
 
-    pub fn init(&mut self, user_agent: &str) -> Vec<u8> {
+    pub fn init(&mut self, user_agent: &str) -> Result<Vec<u8>, byteorder::Error> {
         let message = Init::new(user_agent);
-        let data = message.encode();
+        let data = try!(message.encode());
 
-        self.transport.write(&data).unwrap();
+        try!(self.transport.write(&data));
 
-        let mut info = String::new();
-        for b in self.transport.raw().iter() {
-            info.push_str(format!("{:02X} ", b).as_ref());
-        }
+        try!(self.transport.flush(true));
+        try!(self.transport.send());
 
-        info!("Sending init message: {}", &info);
-
-        self.transport.flush(true).unwrap();
-        self.transport.send().unwrap();
-
-        vec![]
+        Ok(vec![])
     }
 }
