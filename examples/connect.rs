@@ -4,7 +4,7 @@ extern crate log;
 extern crate env_logger;
 
 fn main() {
-    env_logger::init();
+    env_logger::init().unwrap();
     let mut conn = neo4j::connect("localhost", 7687).unwrap();
     let init = conn.init("rust-driver/0.1");
 

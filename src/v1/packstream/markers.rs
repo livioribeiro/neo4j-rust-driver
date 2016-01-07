@@ -29,7 +29,7 @@ pub const RANGE_NEG_INT_64: (i64, i64) = (-9_223_372_036_854_775_808, -2_147_483
 marker! { FLOAT = 0xC1 }
 
 // String
-pub const TINY_STRING_NIBBLE: u8 = 0b1000;
+pub const TINY_STRING_NIBBLE: u8 = 0b1000_0000;
 
 marker! { STRING_8 = 0xD0 }
 marker! { STRING_16 = 0xD1 }
@@ -41,7 +41,7 @@ pub const USE_STRING_16: u16 = 65_535;
 pub const USE_STRING_32: u32 = 4_294_967_295;
 
 // List
-pub const TINY_LIST_NIBBLE: u8 = 0b1001;
+pub const TINY_LIST_NIBBLE: u8 = 0b1001_0000;
 
 marker! { LIST_8 = 0xD4 }
 marker! { LIST_16 = 0xD5 }
@@ -53,7 +53,7 @@ pub const USE_LIST_16: u16 = 65_535;
 pub const USE_LIST_32: u32 = 4_294_967_295;
 
 // Map
-pub const TINY_MAP_NIBBLE: u8 = 0b1010;
+pub const TINY_MAP_NIBBLE: u8 = 0b1010_0000;
 
 marker! { MAP_8 = 0xD8 }
 marker! { MAP_16 = 0xD9 }
@@ -64,8 +64,8 @@ pub const USE_MAP_8: u16 = 255;
 pub const USE_MAP_16: u16 = 65_535;
 pub const USE_MAP_32: u32 = 4_294_967_295;
 
-// Map
-pub const TINY_STRUCT_NIBBLE: u8 = 0b1011;
+// Struct
+pub const TINY_STRUCT_NIBBLE: u8 = 0b1011_0000;
 
 marker! { STRUCT_8 = 0xD8 }
 marker! { STRUCT_16 = 0xD9 }

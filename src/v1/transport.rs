@@ -23,6 +23,10 @@ impl ChunkedStream {
         }
     }
 
+    pub fn raw(&self) -> &[u8] {
+        self.raw.get_ref()
+    }
+
     pub fn write(&mut self, buf: &[u8]) -> io::Result<()> {
         let mut b = buf;
 
@@ -77,9 +81,9 @@ impl ChunkedStream {
         try!(self.socket.write_all(self.raw.get_ref()));
 
         debug!("C:{}", self.raw.get_ref().iter().fold(
-            String::new(), |acc, i| format!("{} {}", acc, i)
+            String::new(), |acc, i| format!("{} {:02X}", acc, i)
         ));
-        
+
         self.raw.get_mut().clear();
         self.raw.set_position(0);
         Ok(())
