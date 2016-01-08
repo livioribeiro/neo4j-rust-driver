@@ -159,6 +159,9 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
     }
 
     fn emit_char(&mut self, v: char) -> Result<(), Self::Error> {
+        try!(self.writer.write_u8(m::TINY_STRING_NIBBLE + 1));
+        try!(self.writer.write_u8(v as u8));
+
         Ok(())
     }
 
@@ -388,22 +391,11 @@ mod tests {
     #[test]
     fn serialize_string64() {
         let size = 70_000;
-        let input = {
-            let mut input = String::new();
-            for _ in 0..size {
-                input.push_str("A");
-            }
-            input
-        };
+        let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
         let result = encode(&input).unwrap();
-        let expected = {
-            let mut expected = vec![0xD2, 0x00, 0x01, 0x11, 0x70];
-            for _ in 0..size {
-                expected.push(b'A');
-            }
-            expected
-        };
+        let expected = (0..size).fold(vec![0xD2, 0x00, 0x01, 0x11, 0x70],
+                                      |mut acc, _| { acc.push(b'A'); acc });
 
         assert_eq!(expected, result);
     }
@@ -411,22 +403,11 @@ mod tests {
     #[test]
     fn serialize_string32() {
         let size = 5_000;
-        let input = {
-            let mut input = String::new();
-            for _ in 0..size {
-                input.push_str("A");
-            }
-            input
-        };
+        let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
         let result = encode(&input).unwrap();
-        let expected = {
-            let mut expected = vec![0xD1, 0x13, 0x88];
-            for _ in 0..size {
-                expected.push(b'A');
-            }
-            expected
-        };
+        let expected = (0..size).fold(vec![0xD1, 0x13, 0x88],
+                                      |mut acc, _| { acc.push(b'A'); acc });
 
         assert_eq!(expected, result);
     }
@@ -434,22 +415,10 @@ mod tests {
     #[test]
     fn serialize_string16() {
         let size = 200;
-        let input = {
-            let mut input = String::new();
-            for _ in 0..size {
-                input.push_str("A");
-            }
-            input
-        };
+        let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
         let result = encode(&input).unwrap();
-        let expected = {
-            let mut expected = vec![0xD0, 0xC8];
-            for _ in 0..size {
-                expected.push(b'A');
-            }
-            expected
-        };
+        let expected = (0..size).fold(vec![0xD0, 0xC8], |mut acc, _| { acc.push(b'A'); acc });
 
         assert_eq!(expected, result);
     }
@@ -458,22 +427,20 @@ mod tests {
     fn serialize_tiny_string() {
         for marker in 0x80..0x8F {
             let size = marker - m::TINY_STRING_NIBBLE;
-            let input = {
-                let mut input = String::new();
-                for _ in 0..size {
-                    input.push_str("A");
-                }
-                input
-            };
+            let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
             let result = encode(&input).unwrap();
-            let expected = {
-                let mut expected = vec![marker];
-                for _ in 0..size {
-                    expected.push(b'A');
-                }
-                expected
-            };
+            let expected = (0..size).fold(vec![marker], |mut acc, _| { acc.push(b'A'); acc });
+
+            assert_eq!(expected, result);
+        }
+    }
+
+    #[test]
+    fn serialize_char() {
+        for c in b'A'..b'Z' {
+            let result: Vec<u8> = encode(&(c as char)).unwrap();
+            let expected = vec![0x81, c];
 
             assert_eq!(expected, result);
         }
