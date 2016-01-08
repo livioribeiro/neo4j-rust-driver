@@ -268,11 +268,26 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
 
     fn emit_seq<F>(&mut self, len: usize, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        if len <= m::USE_TINY_LIST as usize {
+            try!(self.writer.write_u8(m::TINY_LIST_NIBBLE + len as u8));
+        } else if len <= m::USE_LIST_8 as usize {
+            try!(self.writer.write_u8(m::LIST_8));
+            try!(self.writer.write_u8(len as u8));
+        } else if len <= m::USE_LIST_16 as usize {
+            try!(self.writer.write_u8(m::LIST_16));
+            try!(self.writer.write_u16::<BigEndian>(len as u16));
+        } else if len <= m::USE_LIST_32 as usize {
+            try!(self.writer.write_u8(m::LIST_32));
+            try!(self.writer.write_u32::<BigEndian>(len as u32));
+        }
+
+        f(self)
     }
     fn emit_seq_elt<F>(&mut self, idx: usize, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        f(self)
     }
 
     fn emit_map<F>(&mut self, len: usize, f: F) -> Result<(), Self::Error>
@@ -389,36 +404,43 @@ mod tests {
     }
 
     #[test]
-    fn serialize_string64() {
+    fn serialize_string32() {
         let size = 70_000;
         let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
         let result = encode(&input).unwrap();
-        let expected = (0..size).fold(vec![0xD2, 0x00, 0x01, 0x11, 0x70],
-                                      |mut acc, _| { acc.push(b'A'); acc });
-
-        assert_eq!(expected, result);
-    }
-
-    #[test]
-    fn serialize_string32() {
-        let size = 5_000;
-        let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
-
-        let result = encode(&input).unwrap();
-        let expected = (0..size).fold(vec![0xD1, 0x13, 0x88],
-                                      |mut acc, _| { acc.push(b'A'); acc });
+        let expected = (0..size).fold(
+            vec![m::STRING_32, 0x00, 0x01, 0x11, 0x70],
+            |mut acc, _| { acc.push(b'A'); acc }
+        );
 
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_string16() {
+        let size = 5_000;
+        let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
+
+        let result = encode(&input).unwrap();
+        let expected = (0..size).fold(
+            vec![m::STRING_16, 0x13, 0x88],
+            |mut acc, _| { acc.push(b'A'); acc }
+        );
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_string8() {
         let size = 200;
         let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
         let result = encode(&input).unwrap();
-        let expected = (0..size).fold(vec![0xD0, 0xC8], |mut acc, _| { acc.push(b'A'); acc });
+        let expected = (0..size).fold(
+            vec![m::STRING_8, 0xC8],
+            |mut acc, _| { acc.push(b'A'); acc }
+        );
 
         assert_eq!(expected, result);
     }
@@ -430,7 +452,10 @@ mod tests {
             let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
             let result = encode(&input).unwrap();
-            let expected = (0..size).fold(vec![marker], |mut acc, _| { acc.push(b'A'); acc });
+            let expected = (0..size).fold(
+                vec![marker],
+                |mut acc, _| { acc.push(b'A'); acc }
+            );
 
             assert_eq!(expected, result);
         }
@@ -444,5 +469,126 @@ mod tests {
 
             assert_eq!(expected, result);
         }
+    }
+
+    #[test]
+    fn serialize_list32() {
+        let size = 70_000;
+        let input = vec![1; size];
+
+        let result = encode(&input).unwrap();
+        let expected = (0..size).fold(
+            vec![m::LIST_32, 0x00, 0x01, 0x11, 0x70],
+            |mut acc, _| { acc.push(0x01); acc }
+        );
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_list16() {
+        let size = 5_000;
+        let input = vec![1; size];
+
+        let result = encode(&input).unwrap();
+        let expected = (0..size).fold(
+            vec![m::LIST_16, 0x13, 0x88],
+            |mut acc, _| { acc.push(0x01); acc }
+        );
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_list8() {
+        let size = 200;
+        let input = vec![1; size];
+
+        let result = encode(&input).unwrap();
+        let expected = (0..size).fold(
+            vec![m::LIST_8, 0xC8],
+            |mut acc, _| { acc.push(0x01); acc }
+        );
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_tiny_list() {
+        for marker in 0x90..0x9F {
+            let size = (marker - m::TINY_LIST_NIBBLE) as usize;
+            let input = vec![1; size];
+
+            let result = encode(&input).unwrap();
+            let expected = (0..size).fold(
+                vec![marker],
+                |mut acc, _| { acc.push(0x01); acc }
+            );
+
+            assert_eq!(expected, result);
+        }
+    }
+
+    #[test]
+    fn serialize_list_of_string() {
+        let size = 3;
+        let input = vec!["abcdefghijklmnopqrstuvwxyz"; size];
+
+        let result = encode(&input).unwrap();
+        let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
+                            m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                            0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
+                            0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
+                            0x77, 0x78, 0x79, 0x7A,
+                            m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                            0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
+                            0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
+                            0x77, 0x78, 0x79, 0x7A,
+                            m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                            0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
+                            0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
+                            0x77, 0x78, 0x79, 0x7A];
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_list_of_int() {
+        let size = 3;
+        let input = vec![32_000; size];
+
+        let result = encode(&input).unwrap();
+        let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
+                            m::INT_16, 0x7D, 0x00,
+                            m::INT_16, 0x7D, 0x00,
+                            m::INT_16, 0x7D, 0x00];
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_list_of_float() {
+        let size = 3;
+        let input = vec![1.1; size];
+
+        let result = encode(&input).unwrap();
+        let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
+                            m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                            m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                            m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A];
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_list_of_bool() {
+        let size = 4;
+        let input = vec![true, false, true, false];
+
+        let result = encode(&input).unwrap();
+        let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
+                            m::TRUE, m::FALSE, m::TRUE, m::FALSE];
+
+        assert_eq!(expected, result);
     }
 }
