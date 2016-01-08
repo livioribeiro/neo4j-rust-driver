@@ -235,35 +235,43 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
 
     fn emit_tuple<F>(&mut self, len: usize, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        self.emit_seq(len, f)
     }
     fn emit_tuple_arg<F>(&mut self, idx: usize, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        self.emit_seq_elt(idx, f)
     }
 
     fn emit_tuple_struct<F>(&mut self, name: &str, len: usize, f: F)
                             -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        self.emit_seq(len, f)
     }
     fn emit_tuple_struct_arg<F>(&mut self, f_idx: usize, f: F)
                                 -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        self.emit_seq_elt(f_idx, f)
     }
 
     // Specialized types:
     fn emit_option<F>(&mut self, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        f(self)
     }
+
     fn emit_option_none(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+        self.emit_nil()
     }
+
     fn emit_option_some<F>(&mut self, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        f(self)
     }
 
     fn emit_seq<F>(&mut self, len: usize, f: F) -> Result<(), Self::Error>
@@ -310,13 +318,19 @@ mod tests {
     use ::v1::packstream::marker as m;
 
     #[test]
+    fn serialize_nil() {
+        let input: Option<()> = None;
+        assert_eq!(vec![m::NULL], encode(&input).unwrap());
+    }
+
+    #[test]
     fn serialize_true() {
-        assert_eq!(vec![0xC3], encode(&true).unwrap());
+        assert_eq!(vec![m::TRUE], encode(&true).unwrap());
     }
 
     #[test]
     fn serialize_false() {
-        assert_eq!(vec![0xC2], encode(&false).unwrap());
+        assert_eq!(vec![m::FALSE], encode(&false).unwrap());
     }
 
     #[test]
@@ -588,6 +602,20 @@ mod tests {
         let result = encode(&input).unwrap();
         let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
                             m::TRUE, m::FALSE, m::TRUE, m::FALSE];
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_tuple() {
+        let size = 3;
+        let input = (1, 1.1, "A");
+
+        let result = encode(&input).unwrap();
+        let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
+                            0x01,
+                            m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                            m::TINY_STRING_NIBBLE + 1, 0x41];
 
         assert_eq!(expected, result);
     }
