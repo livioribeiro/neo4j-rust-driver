@@ -74,8 +74,8 @@ pub const USE_MAP_32: u32 = 4_294_967_295;
 // Struct
 pub const TINY_STRUCT_NIBBLE: u8 = 0b1011_0000;
 
-marker! { STRUCT_8 = 0xD8 }
-marker! { STRUCT_16 = 0xD9 }
+marker! { STRUCT_8 = 0xDC }
+marker! { STRUCT_16 = 0xDD }
 
 pub const USE_TINY_STRUCT: u16 = 15;
 pub const USE_STRUCT_8: u16 = 255;
