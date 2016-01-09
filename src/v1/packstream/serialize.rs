@@ -351,6 +351,9 @@ mod tests {
 
     #[test]
     fn serialize_nil() {
+        let input = ();
+        assert_eq!(vec![m::NULL], encode(&input).unwrap());
+
         let input: Option<()> = None;
         assert_eq!(vec![m::NULL], encode(&input).unwrap());
     }
