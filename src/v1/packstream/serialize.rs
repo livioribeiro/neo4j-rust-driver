@@ -1028,7 +1028,7 @@ mod tests {
     }
 
     #[test]
-    fn serialize_tuple_enum() {
+    fn serialize_enum_tuple_variant() {
         let size = 2;
 
         #[derive(RustcEncodable)]
@@ -1046,7 +1046,7 @@ mod tests {
     }
 
     // #[test]
-    // fn serialize_enum_struct() {
+    // fn serialize_enum_struct_variant() {
     //     let size = 2;
     //
     //     #[derive(RustcEncodable)]
