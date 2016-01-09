@@ -187,11 +187,11 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
         Ok(())
     }
 
-
     // Compound types:
     fn emit_enum<F>(&mut self, name: &str, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        f(self)
     }
 
     fn emit_enum_variant<F>(&mut self, v_name: &str,
@@ -199,12 +199,19 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
                             len: usize,
                             f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        if len == 0 {
+            self.emit_str(v_name)
+        } else {
+            self.emit_seq(len, f)
+        }
     }
+
     fn emit_enum_variant_arg<F>(&mut self, a_idx: usize, f: F)
                                 -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        f(self)
     }
 
     fn emit_enum_struct_variant<F>(&mut self, v_name: &str,
@@ -212,14 +219,22 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
                                    len: usize,
                                    f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        if len == 0 {
+            self.emit_str(v_name)
+        } else {
+            self.emit_map(len, f)
+        }
     }
+
     fn emit_enum_struct_variant_field<F>(&mut self,
                                          f_name: &str,
                                          f_idx: usize,
                                          f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
-        Ok(())
+
+        try!(self.emit_str(f_name));
+        self.emit_map_elt_val(f_idx, f)
     }
 
     fn emit_struct<F>(&mut self, name: &str, len: usize, f: F)
@@ -238,6 +253,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
 
         f(self)
     }
+
     fn emit_struct_field<F>(&mut self, f_name: &str, f_idx: usize, f: F)
                             -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
@@ -252,6 +268,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
 
         self.emit_seq(len, f)
     }
+
     fn emit_tuple_arg<F>(&mut self, idx: usize, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
@@ -1005,4 +1022,57 @@ mod tests {
 
         assert_eq!(expected, result);
     }
+
+    #[test]
+    fn serialize_enum() {
+        #[derive(RustcEncodable)]
+        enum MyEnum {
+            A,
+        }
+
+        let input = MyEnum::A;
+
+        let result = encode(&input).unwrap();
+        let expected = vec![0x81, 0x41];
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_tuple_enum() {
+        let size = 2;
+
+        #[derive(RustcEncodable)]
+        enum MyEnum {
+            A(u16, u16),
+        }
+
+        let input = MyEnum::A(1, 2);
+
+        let result = encode(&input).unwrap();
+        let expected = vec![m::TINY_LIST_NIBBLE + size,
+                            0x01, 0x02];
+
+        assert_eq!(expected, result);
+    }
+
+    // #[test]
+    // fn serialize_enum_struct() {
+    //     let size = 2;
+    //
+    //     #[derive(RustcEncodable)]
+    //     #[allow(non_snake_case)]
+    //     enum MyEnum {
+    //         A { A: u16, B: u16 },
+    //     }
+    //
+    //     let input = MyEnum::A { A: 1, B: 2 };
+    //
+    //     let result = encode(&input).unwrap();
+    //     let expected = vec![m::TINY_MAP_NIBBLE + size,
+    //                         0x81, 0x41, 0x01,
+    //                         0x81, 0x42, 0x02];
+    //
+    //     assert_eq!(expected, result);
+    // }
 }
