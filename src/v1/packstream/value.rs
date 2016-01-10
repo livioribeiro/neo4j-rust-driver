@@ -16,7 +16,7 @@ pub enum Value {
 pub type List = Vec<Value>;
 pub type Map = BTreeMap<String, Value>;
 
-impl<'a> Encodable for Value {
+impl Encodable for Value {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
         match *self {
             Value::Null => e.emit_nil(),
