@@ -54,10 +54,10 @@ marker! { LIST_8 = 0xD4 }
 marker! { LIST_16 = 0xD5 }
 marker! { LIST_32 = 0xD6 }
 
-pub const USE_TINY_LIST: u16 = 15;
-pub const USE_LIST_8: u16 = 255;
-pub const USE_LIST_16: u16 = 65_535;
-pub const USE_LIST_32: u32 = 4_294_967_295;
+pub const USE_TINY_LIST: usize = 15;
+pub const USE_LIST_8: usize = 255;
+pub const USE_LIST_16: usize = 65_535;
+pub const USE_LIST_32: usize = 4_294_967_295;
 
 // Map
 pub const TINY_MAP_NIBBLE: u8 = 0b1010_0000;
@@ -66,10 +66,10 @@ marker! { MAP_8 = 0xD8 }
 marker! { MAP_16 = 0xD9 }
 marker! { MAP_32 = 0xDA }
 
-pub const USE_TINY_MAP: u16 = 15;
-pub const USE_MAP_8: u16 = 255;
-pub const USE_MAP_16: u16 = 65_535;
-pub const USE_MAP_32: u32 = 4_294_967_295;
+pub const USE_TINY_MAP: usize = 15;
+pub const USE_MAP_8: usize = 255;
+pub const USE_MAP_16: usize = 65_535;
+pub const USE_MAP_32: usize = 4_294_967_295;
 
 // Struct
 pub const TINY_STRUCT_NIBBLE: u8 = 0b1011_0000;
@@ -77,9 +77,9 @@ pub const TINY_STRUCT_NIBBLE: u8 = 0b1011_0000;
 marker! { STRUCT_8 = 0xDC }
 marker! { STRUCT_16 = 0xDD }
 
-pub const USE_TINY_STRUCT: u16 = 15;
-pub const USE_STRUCT_8: u16 = 255;
-pub const USE_STRUCT_16: u16 = 65_535;
+pub const USE_TINY_STRUCT: usize = 15;
+pub const USE_STRUCT_8: usize = 255;
+pub const USE_STRUCT_16: usize = 65_535;
 
 // End marker
 pub const END: u16 = 0x00_00;
