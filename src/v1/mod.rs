@@ -1,6 +1,6 @@
 pub mod transport;
 pub mod connection;
 pub mod packstream;
-pub mod messages;
+pub mod protocol;
 
 pub use self::connection::Connection;

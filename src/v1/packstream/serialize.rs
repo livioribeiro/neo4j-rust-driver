@@ -7,6 +7,8 @@ use byteorder::{self, WriteBytesExt, BigEndian};
 
 use super::marker as m;
 
+const STRUCTURE_PREFIX: &'static str = "__STRUCTURE__";
+
 // #[derive(Debug)]
 // pub struct EncoderError {
 //     description: String,
@@ -241,7 +243,38 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
                       -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
-        self.emit_map(len, f)
+        use super::super::protocol::signature as sig;
+
+        if name.starts_with(STRUCTURE_PREFIX) {
+            let signature: u8 = {
+                let sig = match name.split(STRUCTURE_PREFIX).nth(1) {
+                    Some(sig) => sig,
+                    None => return Err(byteorder::Error::UnexpectedEOF)
+                };
+
+                match sig {
+                    "INIT" => sig::INIT,
+                    _ => unreachable!(),
+                }
+            };
+
+            if len <= m::USE_TINY_STRUCT {
+                try!(self.writer.write_u8(m::TINY_STRUCT_NIBBLE | len as u8));
+                try!(self.writer.write_u8(signature));
+            } else if len <= m::USE_STRUCT_8 {
+                try!(self.writer.write_u8(m::STRUCT_8));
+                try!(self.writer.write_u8(signature));
+                try!(self.writer.write_u8(len as u8));
+            } else if len <= m::USE_STRUCT_16 {
+                try!(self.writer.write_u8(m::STRUCT_16));
+                try!(self.writer.write_u8(signature));
+                try!(self.writer.write_u16::<BigEndian>(len as u16));
+            }
+
+            Ok(())
+        } else {
+            self.emit_map(len, f)
+        }
     }
 
     fn emit_struct_field<F>(&mut self, f_name: &str, f_idx: usize, f: F)
