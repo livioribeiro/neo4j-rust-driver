@@ -74,23 +74,36 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
     }
 
     fn emit_usize(&mut self, v: usize) -> Result<(), Self::Error> {
-        self.emit_i64(v as i64)
+        self.emit_u64(v as u64)
     }
 
     fn emit_u64(&mut self, v: u64) -> Result<(), Self::Error> {
-        self.emit_i64(v as i64)
+        if v >= m::RANGE_POS_INT_64.0 as u64 && v <= m::RANGE_POS_INT_64.1 as u64 {
+            try!(self.writer.write_u8(m::INT_64));
+            try!(self.writer.write_u64::<BigEndian>(v));
+        } else if v >= m::RANGE_POS_INT_32.0 as u64 && v <= m::RANGE_POS_INT_32.1 as u64 {
+            try!(self.writer.write_u8(m::INT_32));
+            try!(self.writer.write_u32::<BigEndian>(v as u32));
+        } else if v >= m::RANGE_POS_INT_16.0 as u64 && v <= m::RANGE_POS_INT_16.1 as u64 {
+            try!(self.writer.write_u8(m::INT_16));
+            try!(self.writer.write_u16::<BigEndian>(v as u16));
+        } else if v <= m::RANGE_TINY_INT.1 as u64 {
+            try!(self.writer.write_u8(v as u8));
+        }
+
+        Ok(())
     }
 
     fn emit_u32(&mut self, v: u32) -> Result<(), Self::Error> {
-        self.emit_i64(v as i64)
+        self.emit_u64(v as u64)
     }
 
     fn emit_u16(&mut self, v: u16) -> Result<(), Self::Error> {
-        self.emit_i64(v as i64)
+        self.emit_u64(v as u64)
     }
 
     fn emit_u8(&mut self, v: u8) -> Result<(), Self::Error> {
-        self.emit_i64(v as i64)
+        self.emit_u64(v as u64)
     }
 
     fn emit_isize(&mut self, v: isize) -> Result<(), Self::Error> {

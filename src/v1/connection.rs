@@ -1,9 +1,8 @@
 use std::net::TcpStream;
-use byteorder;
 
 use super::transport::ChunkedStream;
 use super::protocol::message::Init;
-use super::packstream::serialize::encode;
+use super::packstream::serialize::{encode, EncodeResult};
 
 pub struct Connection {
     transport: ChunkedStream,
@@ -16,7 +15,7 @@ impl Connection {
         }
     }
 
-    pub fn init(&mut self, user_agent: &str) -> Result<Vec<u8>, byteorder::Error> {
+    pub fn init(&mut self, user_agent: &str) -> EncodeResult<Vec<u8>> {
         let message = Init::new(user_agent);
         let data = try!(encode(&message));
 
