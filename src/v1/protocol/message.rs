@@ -5,6 +5,8 @@ use ::v1::packstream::value::{Value, Map};
 
 const INIT_SIZE: usize = 1;
 const RUN_SIZE: usize = 2;
+const DISCARD_ALL_SIZE: usize = 0;
+const PULL_ALL_SIZE: usize = 0;
 
 pub struct Init {
     client_name: String,
@@ -60,9 +62,25 @@ impl Encodable for Run {
     }
 }
 
+pub struct DiscardAll;
+
+impl Encodable for DiscardAll {
+    fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
+        e.emit_struct("__STRUCTURE__DISCARD_ALL", DISCARD_ALL_SIZE, |_| Ok(()))
+    }
+}
+
+pub struct PullAll;
+
+impl Encodable for PullAll {
+    fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
+        e.emit_struct("__STRUCTURE__PULL_ALL", PULL_ALL_SIZE, |_| Ok(()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Init, Run};
+    use super::*;
     use ::v1::packstream::serialize::encode;
 
     #[test]
@@ -104,6 +122,22 @@ mod tests {
                             0x3A, 0x20, 0x7B, 0x76,
                             0x7D, 0x7D, 0x29,
                             0xA1, 0x81, 0x76, 0x01];
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_discard_all() {
+        let result = encode(&DiscardAll).unwrap();
+        let expected = vec![0xB0, 0x2F];
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_pull_all() {
+        let result = encode(&PullAll).unwrap();
+        let expected = vec![0xB0, 0x3F];
 
         assert_eq!(expected, result);
     }
