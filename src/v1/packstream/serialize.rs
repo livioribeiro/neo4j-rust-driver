@@ -243,19 +243,13 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
                       -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
-        use super::super::protocol::signature as sig;
+        use super::super::protocol;
 
         if name.starts_with(STRUCTURE_PREFIX) {
-            let signature: u8 = {
-                let sig = match name.split(STRUCTURE_PREFIX).nth(1) {
-                    Some(sig) => sig,
-                    None => return Err(byteorder::Error::UnexpectedEOF)
-                };
-
-                match sig {
-                    "INIT" => sig::INIT,
-                    _ => unreachable!(),
-                }
+            let name = &name[STRUCTURE_PREFIX.len()..name.len()];
+            let signature = match protocol::signature(name) {
+                Some(s) => s,
+                None => return Err(byteorder::Error::UnexpectedEOF) // TODO: find a better error
             };
 
             if len <= m::USE_TINY_STRUCT {
@@ -269,6 +263,8 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
                 try!(self.writer.write_u8(m::STRUCT_16));
                 try!(self.writer.write_u8(signature));
                 try!(self.writer.write_u16::<BigEndian>(len as u16));
+            } else {
+                return Err(byteorder::Error::UnexpectedEOF) // TODO: find a better error
             }
 
             Ok(())
