@@ -430,4 +430,66 @@ mod tests {
 
         assert_eq!(expected, to_value(&input));
     }
+
+    #[test]
+    fn encode_struct() {
+        #[derive(RustcEncodable)]
+        #[allow(non_snake_case)]
+        struct MyStruct {
+            A: u32,
+            B: f64,
+            C: String,
+        }
+
+        let input = MyStruct {
+            A: 1,
+            B: 1.1,
+            C: "A".to_owned(),
+        };
+
+        let expected = {
+            let mut expected: BTreeMap<String, Value> = BTreeMap::new();
+            expected.insert("A".to_owned(), Value::Integer(1));
+            expected.insert("B".to_owned(), Value::Float(1.1));
+            expected.insert("C".to_owned(), Value::String("A".to_owned()));
+
+            Value::Map(expected)
+        };
+
+        assert_eq!(expected, to_value(&input));
+    }
+
+    #[test]
+    fn encode_tuple() {
+        let input = (1, 1.1, "A");
+        let expected = Value::List(vec![Value::Integer(1), Value::Float(1.1), Value::String("A".to_owned())]);
+
+        assert_eq!(expected, to_value(&input));
+    }
+
+    #[test]
+    fn encode_enum() {
+        #[derive(RustcEncodable)]
+        enum MyEnum {
+            MyVariant,
+        }
+
+        let input = MyEnum::MyVariant;
+        let expected = Value::String("MyVariant".to_owned());
+
+        assert_eq!(expected, to_value(&input));
+    }
+
+    #[test]
+    fn encode_enum_tuple_variant() {
+        #[derive(RustcEncodable)]
+        enum MyEnum {
+            MyVariant(u32, f64, String),
+        }
+
+        let input = MyEnum::MyVariant(1, 1.1, "A".to_owned());
+        let expected = Value::List(vec![Value::Integer(1), Value::Float(1.1), Value::String("A".to_owned())]);
+
+        assert_eq!(expected, to_value(&input));
+    }
 }
