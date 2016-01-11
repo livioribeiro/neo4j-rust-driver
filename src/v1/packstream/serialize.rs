@@ -398,12 +398,8 @@ mod tests {
     }
 
     #[test]
-    fn serialize_true() {
+    fn serialize_bool() {
         assert_eq!(vec![m::TRUE], encode(&true).unwrap());
-    }
-
-    #[test]
-    fn serialize_false() {
         assert_eq!(vec![m::FALSE], encode(&false).unwrap());
     }
 
@@ -874,8 +870,6 @@ mod tests {
 
     #[test]
     fn serialize_struct16() {
-        let size = 256;
-
         #[derive(RustcEncodable)]
         #[allow(non_snake_case)]
         struct MyStruct {

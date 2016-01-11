@@ -3,6 +3,10 @@ use std::convert::{From, Into};
 use std::string;
 use rustc_serialize::{Encodable, Encoder};
 
+pub mod serialize;
+
+pub use self::serialize::to_value;
+
 #[derive(Clone, PartialEq, PartialOrd, Debug)]
 pub enum Value {
     Null,
@@ -16,6 +20,92 @@ pub enum Value {
 
 pub type List = Vec<Value>;
 pub type Map = BTreeMap<String, Value>;
+
+impl Value {
+    pub fn is_null(&self) -> bool {
+        *self == Value::Null
+    }
+
+    pub fn as_boolean(&self) -> Option<bool> {
+        match *self {
+            Value::Boolean(v) => Some(v),
+            _ => None
+        }
+    }
+
+    pub fn is_boolean(&self) -> bool {
+        self.as_boolean().is_some()
+    }
+
+    pub fn as_integer(&self) -> Option<i64> {
+        match *self {
+            Value::Integer(v) => Some(v),
+            _ => None
+        }
+    }
+
+    pub fn is_integer(&self) -> bool {
+        self.as_integer().is_some()
+    }
+
+    pub fn as_float(&self) -> Option<f64> {
+        match *self {
+            Value::Float(v) => Some(v),
+            _ => None
+        }
+    }
+
+    pub fn is_float(&self) -> bool {
+        self.as_float().is_some()
+    }
+
+    pub fn as_string(&self) -> Option<&str> {
+        match *self {
+            Value::String(ref v) => Some(v),
+            _ => None
+        }
+    }
+
+    pub fn is_string(&self) -> bool {
+        self.as_string().is_some()
+    }
+
+    pub fn as_list(&self) -> Option<&List> {
+        match self {
+            &Value::List(ref v) => Some(v),
+            _ => None
+        }
+    }
+
+    pub fn as_list_mut(&mut self) -> Option<&mut List> {
+        match self {
+            &mut Value::List(ref mut v) => Some(v),
+            _ => None
+        }
+    }
+
+    pub fn is_list(&self) -> bool {
+        self.as_list().is_some()
+    }
+
+    pub fn as_map(&self) -> Option<&Map> {
+        match self {
+            &Value::Map(ref v) => Some(v),
+            _ => None
+        }
+    }
+
+    pub fn as_map_mut(&mut self) -> Option<&mut Map> {
+        match self {
+            &mut Value::Map(ref mut v) => Some(v),
+            _ => None
+        }
+    }
+
+    pub fn is_map(&self) -> bool {
+        self.as_map().is_some()
+    }
+}
 
 impl Encodable for Value {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {

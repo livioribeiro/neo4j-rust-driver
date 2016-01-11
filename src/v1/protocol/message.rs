@@ -1,7 +1,7 @@
-use std::convert::Into;
+use std::collections::BTreeMap;
 use rustc_serialize::{Encodable, Encoder};
 
-use ::v1::packstream::value::{Value, Map};
+use ::v1::packstream::value::{self, Value};
 
 const INIT_SIZE: usize = 1;
 const RUN_SIZE: usize = 2;
@@ -32,23 +32,23 @@ impl Encodable for Init {
 
 pub struct Run {
     statement: String,
-    parameters: Map,
+    parameters: BTreeMap<String, Value>,
 }
 
 impl Run {
     pub fn new(statement: &str) -> Self {
         Run {
             statement: statement.to_owned(),
-            parameters: Map::new(),
+            parameters: BTreeMap::new(),
         }
     }
 
-    pub fn add_param<T: Into<Value>>(&mut self, name: &str, value: T) {
-        self.parameters.insert(name.to_owned(), value.into());
+    pub fn add_param<T: Encodable>(&mut self, name: &str, param: T) {
+        self.parameters.insert(name.to_owned(), value::to_value(&param));
     }
 
-    pub fn with_param<T: Into<Value>>(mut self, name: &str, value: T) -> Self {
-        self.add_param(name, value);
+    pub fn with_param<T: Encodable>(mut self, name: &str, param: T) -> Self {
+        self.add_param(name, param);
         self
     }
 }
