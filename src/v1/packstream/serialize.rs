@@ -1,5 +1,3 @@
-#![allow(unused_variables)]
-
 use std::error::Error;
 use std::fmt;
 use std::io::prelude::*;
@@ -199,14 +197,14 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
     }
 
     // Compound types:
-    fn emit_enum<F>(&mut self, name: &str, f: F) -> Result<(), Self::Error>
+    fn emit_enum<F>(&mut self, _: &str, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
         f(self)
     }
 
     fn emit_enum_variant<F>(&mut self, v_name: &str,
-                            v_id: usize,
+                            _: usize,
                             len: usize,
                             f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
@@ -218,7 +216,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
         }
     }
 
-    fn emit_enum_variant_arg<F>(&mut self, a_idx: usize, f: F)
+    fn emit_enum_variant_arg<F>(&mut self, _: usize, f: F)
                                 -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
@@ -226,7 +224,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
     }
 
     fn emit_enum_struct_variant<F>(&mut self, v_name: &str,
-                                   v_id: usize,
+                                   _: usize,
                                    len: usize,
                                    f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
@@ -279,7 +277,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
         }
     }
 
-    fn emit_struct_field<F>(&mut self, f_name: &str, f_idx: usize, f: F)
+    fn emit_struct_field<F>(&mut self, f_name: &str, _: usize, f: F)
                             -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
@@ -299,7 +297,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
         self.emit_seq_elt(idx, f)
     }
 
-    fn emit_tuple_struct<F>(&mut self, name: &str, len: usize, f: F)
+    fn emit_tuple_struct<F>(&mut self, _: &str, len: usize, f: F)
                             -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
@@ -347,7 +345,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
 
         f(self)
     }
-    fn emit_seq_elt<F>(&mut self, idx: usize, f: F) -> Result<(), Self::Error>
+    fn emit_seq_elt<F>(&mut self, _: usize, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
         f(self)
@@ -371,12 +369,12 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
 
             f(self)
     }
-    fn emit_map_elt_key<F>(&mut self, idx: usize, f: F) -> Result<(), Self::Error>
+    fn emit_map_elt_key<F>(&mut self, _: usize, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
         f(self)
     }
-    fn emit_map_elt_val<F>(&mut self, idx: usize, f: F) -> Result<(), Self::Error>
+    fn emit_map_elt_val<F>(&mut self, _: usize, f: F) -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
         f(self)
