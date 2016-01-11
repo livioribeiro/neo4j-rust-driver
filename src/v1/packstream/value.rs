@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::convert::{From, Into};
 use std::string;
 use rustc_serialize::{Encodable, Encoder};
 
@@ -27,6 +28,73 @@ impl Encodable for Value {
             Value::List(ref v) => v.encode(e),
             Value::Map(ref v) => v.encode(e),
         }
+    }
+}
+
+impl<T> From<Option<T>> for Value where T: Into<Value> {
+    fn from(value: Option<T>) -> Self {
+        match value {
+            Some(v) => v.into(),
+            None => Value::Null,
+        }
+    }
+}
+
+impl From<()> for Value {
+    fn from(_: ()) -> Self { Value::Null }
+}
+
+impl From<bool> for Value {
+    fn from(val: bool) -> Self { Value::Boolean(val) }
+}
+
+macro_rules! impl_from_int {
+    ($($t:ty), +) => (
+        $(impl From<$t> for Value {
+            fn from(v: $t) -> Value { Value::Integer(v as i64) }
+        })+
+    )
+}
+
+impl_from_int!(usize, isize, u8, i8, u16, i16, u32, i32, u64, i64);
+
+impl From<f32> for Value {
+    fn from(val: f32) -> Self { Value::Float(val as f64) }
+}
+
+impl From<f64> for Value {
+    fn from(val: f64) -> Self { Value::Float(val) }
+}
+
+impl<'a> From<&'a str> for Value {
+    fn from(val: &'a str) -> Self { Value::String(val.to_owned()) }
+}
+
+impl From<String> for Value {
+    fn from(val: String) -> Self { Value::String(val) }
+}
+
+impl<T: Into<Value>> From<Vec<T>> for Value {
+    fn from(val: Vec<T>) -> Self {
+        Value::List(val.into_iter().map(|i| i.into()).collect())
+    }
+}
+
+impl<T: Into<Value>> From<BTreeMap<String, T>> for Value {
+    fn from(val: BTreeMap<String, T>) -> Self {
+        Value::Map(val.into_iter().fold(
+            BTreeMap::<String, Value>::new(),
+            |mut acc, (k, v)| { acc.insert(k, v.into()); acc }
+        ))
+    }
+}
+
+impl<'a, T: Into<Value>> From<BTreeMap<&'a str, T>> for Value {
+    fn from(val: BTreeMap<&'a str, T>) -> Self {
+        Value::Map(val.into_iter().fold(
+            BTreeMap::<String, Value>::new(),
+            |mut acc, (k, v)| { acc.insert(k.to_owned(), v.into()); acc }
+        ))
     }
 }
 
@@ -84,5 +152,85 @@ mod tests {
 
         let input = (0..256).fold(Map::new(), &closure);
         assert_eq!(encode(&input).unwrap(), encode(&Value::Map(input)).unwrap());
+    }
+
+    #[test]
+    fn from_unit() {
+        assert_eq!(Value::Null, Value::from(()));
+    }
+
+    #[test]
+    fn from_bool() {
+        assert_eq!(Value::Boolean(true), Value::from(true));
+        assert_eq!(Value::Boolean(false), Value::from(false));
+    }
+
+    #[test]
+    fn from_int() {
+        assert_eq!(Value::Integer(42), Value::from(42usize));
+        assert_eq!(Value::Integer(42), Value::from(42isize));
+
+        assert_eq!(Value::Integer(42), Value::from(42u8));
+        assert_eq!(Value::Integer(42), Value::from(42i8));
+
+        assert_eq!(Value::Integer(42), Value::from(42u16));
+        assert_eq!(Value::Integer(42), Value::from(42i16));
+
+        assert_eq!(Value::Integer(42), Value::from(42u32));
+        assert_eq!(Value::Integer(42), Value::from(42i32));
+
+        assert_eq!(Value::Integer(42), Value::from(42u64));
+        assert_eq!(Value::Integer(42), Value::from(42i64));
+    }
+
+    #[test]
+    fn from_float() {
+        assert_eq!(Value::Float(1.1f32 as f64), Value::from(1.1f32));
+        assert_eq!(Value::Float(1.1), Value::from(1.1f64));
+    }
+
+    #[test]
+    fn from_string() {
+        assert_eq!(Value::String("abc".into()), Value::from("abc"));
+        assert_eq!(Value::String("abc".into()), Value::from("abc".to_owned()));
+    }
+
+    #[test]
+    fn from_vec() {
+        assert_eq!(Value::List(vec![Value::Integer(1)]),
+                   Value::from(vec![1]));
+    }
+
+    #[test]
+    fn from_btreemap() {
+        use ::std::collections::BTreeMap;
+
+        let mut input: BTreeMap<&str, u32> = BTreeMap::new();
+        input.insert("A", 1);
+
+        let mut expected: BTreeMap<String, Value> = BTreeMap::new();
+        expected.insert("A".to_owned(), Value::Integer(1));
+
+        assert_eq!(Value::Map(expected.clone()), Value::from(input));
+
+        let mut input: BTreeMap<String, u32> = BTreeMap::new();
+        input.insert("A".to_owned(), 1);
+
+        assert_eq!(Value::Map(expected.clone()), Value::from(input));
+    }
+
+    #[test]
+    fn from_option_none() {
+        let input: Option<()> = None;
+        assert_eq!(Value::Null, Value::from(input));
+    }
+
+    #[test]
+    fn from_option_some() {
+        assert_eq!(Value::Boolean(true), Value::from(Some(true)));
+        assert_eq!(Value::Integer(1), Value::from(Some(1)));
+        assert_eq!(Value::Float(1.1), Value::from(Some(1.1)));
+        assert_eq!(Value::String("abc".to_owned()), Value::from(Some("abc")));
+        assert_eq!(Value::List(vec![Value::Integer(1)]), Value::from(Some(vec![1])));
     }
 }
