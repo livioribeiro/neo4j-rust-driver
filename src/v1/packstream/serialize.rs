@@ -1,7 +1,9 @@
 #![allow(unused_variables)]
 
+use std::error::Error;
+use std::fmt;
 use std::io::prelude::*;
-use std::io::Cursor;
+use std::io::{self, Cursor};
 use rustc_serialize::{Encodable, Encoder};
 use byteorder::{self, WriteBytesExt, BigEndian};
 
@@ -9,41 +11,37 @@ use super::marker as m;
 
 const STRUCTURE_PREFIX: &'static str = "__STRUCTURE__";
 
-// #[derive(Debug)]
-// pub struct EncoderError {
-//     description: String,
-//     cause: Option<Box<Error>>
-// }
-//
-// impl From<io::Error> for EncoderError {
-//     fn from(error: io::Error) -> Self {
-//         EncoderError {
-//             description: "IO Error".into(),
-//             cause: Some(Box::new(error)),
-//         }
-//     }
-// }
-//
-// impl fmt::Display for EncoderError {
-//     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-//         let message = self.cause
-//             .as_ref()
-//             .map(|e| format!("{}", e))
-//             .unwrap_or(self.description.clone());
-//         write!(f, "Encoder Error: {}", message);
-//         Ok(())
-//     }
-// }
-//
-// impl Error for EncoderError {
-//     fn description(&self) -> &str {
-//         &self.description
-//     }
-//
-//     fn cause(&self) -> Option<&Error> {
-//         self.cause.as_ref().map(|e| &**e)
-//     }
-// }
+#[derive(Debug)]
+pub enum EncoderError {
+    EncodingError(byteorder::Error),
+    IoError(io::Error),
+    UnknownMessage,
+    InvalidStructureLength,
+}
+
+impl Error for EncoderError {
+    fn description(&self) -> &str { "encoder error" }
+}
+
+impl fmt::Display for EncoderError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self, f)
+    }
+}
+
+impl From<byteorder::Error> for EncoderError {
+    fn from(error: byteorder::Error) -> Self {
+        EncoderError::EncodingError(error)
+    }
+}
+
+impl From<io::Error> for EncoderError {
+    fn from(error: io::Error) -> Self {
+        EncoderError::IoError(error)
+    }
+}
+
+pub type EncodeResult<T> = Result<T, EncoderError>;
 
 pub fn encode<T: Encodable>(object: &T) -> EncodeResult<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
@@ -53,8 +51,6 @@ pub fn encode<T: Encodable>(object: &T) -> EncodeResult<Vec<u8>> {
     }
     Ok(buf.into_inner())
 }
-
-pub type EncodeResult<T> = Result<T, byteorder::Error>;
 
 struct PackstreamEncoder<'a, W: Write + 'a> {
     writer: &'a mut W,
@@ -69,7 +65,7 @@ impl<'a, W: Write> PackstreamEncoder<'a, W> {
 }
 
 impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
-    type Error = byteorder::Error;
+    type Error = EncoderError;
 
     // Primitive types:
     fn emit_nil(&mut self) -> Result<(), Self::Error> {
@@ -247,10 +243,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
 
         if name.starts_with(STRUCTURE_PREFIX) {
             let name = &name[STRUCTURE_PREFIX.len()..name.len()];
-            let signature = match protocol::signature(name) {
-                Some(s) => s,
-                None => return Err(byteorder::Error::UnexpectedEOF) // TODO: find a better error
-            };
+            let signature = try!(protocol::signature(name).ok_or(EncoderError::UnknownMessage));
 
             if len <= m::USE_TINY_STRUCT {
                 try!(self.writer.write_u8(m::TINY_STRUCT_NIBBLE | len as u8));
@@ -264,7 +257,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
                 try!(self.writer.write_u8(signature));
                 try!(self.writer.write_u16::<BigEndian>(len as u16));
             } else {
-                return Err(byteorder::Error::UnexpectedEOF) // TODO: find a better error
+                return Err(EncoderError::InvalidStructureLength)
             }
 
             Ok(())
