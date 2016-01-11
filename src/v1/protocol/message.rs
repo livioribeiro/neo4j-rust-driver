@@ -7,6 +7,7 @@ const INIT_SIZE: usize = 1;
 const RUN_SIZE: usize = 2;
 const DISCARD_ALL_SIZE: usize = 0;
 const PULL_ALL_SIZE: usize = 0;
+const ACK_FAILURE_SIZE: usize = 0;
 
 pub struct Init {
     client_name: String,
@@ -78,6 +79,14 @@ impl Encodable for PullAll {
     }
 }
 
+pub struct AckFailure;
+
+impl Encodable for AckFailure {
+    fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
+        e.emit_struct("__STRUCTURE__ACK_FAILURE", ACK_FAILURE_SIZE, |_| Ok(()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +147,14 @@ mod tests {
     fn serialize_pull_all() {
         let result = encode(&PullAll).unwrap();
         let expected = vec![0xB0, 0x3F];
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn serialize_ack_failure() {
+        let result = encode(&AckFailure).unwrap();
+        let expected = vec![0xB0, 0x0F];
 
         assert_eq!(expected, result);
     }
