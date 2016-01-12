@@ -212,6 +212,10 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
         if len == 0 {
             self.emit_str(v_name)
         } else {
+            try!(self.writer.write_u8(m::TINY_MAP_NIBBLE | 0x02));
+            try!(self.emit_str("variant"));
+            try!(self.emit_str(v_name));
+            try!(self.emit_str("fields"));
             self.emit_seq(len, f)
         }
     }
@@ -1056,18 +1060,19 @@ mod tests {
 
     #[test]
     fn serialize_enum_tuple_variant() {
-        let size = 2;
-
         #[derive(RustcEncodable)]
-        enum MyEnum {
+        enum A {
             A(u16, u16),
         }
 
-        let input = MyEnum::A(1, 2);
+        let input = A::A(1, 2);
 
         let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_LIST_NIBBLE + size,
-                            0x01, 0x02];
+        let expected = vec![m::TINY_MAP_NIBBLE | 0x02,
+                            0x87, b'v', b'a', b'r', b'i', b'a', b'n', b't',
+                            0x81, 0x41,
+                            0x86, b'f', b'i', b'e', b'l', b'd', b's',
+                            0x92, 0x01, 0x02];
 
         assert_eq!(expected, result);
     }
