@@ -380,10 +380,16 @@ impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
             return wrong_marker!("STRING".to_owned(), marker)
         }
 
-        let mut buf: Vec<u8> = Vec::with_capacity(size);
-        try!(self.reader.read(&mut buf));
+        let mut buf = [0u8; 4096];
+        let mut store: Vec<u8> = Vec::with_capacity(size);
 
-        String::from_utf8(buf).map_err(From::from)
+        let loops = (size as f32 / 4096.0).ceil() as usize;
+        for _ in 0..loops {
+            let bytes = try!(self.reader.read(&mut buf));
+            store.extend(buf[0..bytes].iter());
+        }
+
+        String::from_utf8(store).map_err(From::from)
     }
 
     // Compound types:
@@ -856,5 +862,73 @@ mod tests {
         let mut input = Cursor::new(vec![m::FLOAT, 0xBF, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]);
         let result: f64 = decode(&mut input).unwrap();
         assert_eq!(-1.1, result);
+    }
+
+    #[test]
+    fn deserialize_string32() {
+        let size = 70_000;
+        let mut input = Cursor::new((0..size).fold(
+            vec![m::STRING_32, 0x00, 0x01, 0x11, 0x70],
+            |mut acc, _| { acc.push(b'A'); acc }
+        ));
+
+        let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
+        let result: String = decode(&mut input).unwrap();
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn deserialize_string16() {
+        let size = 5_000;
+        let mut input = Cursor::new((0..size).fold(
+            vec![m::STRING_16, 0x13, 0x88],
+            |mut acc, _| { acc.push(b'A'); acc }
+        ));
+
+        let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
+        let result: String = decode(&mut input).unwrap();
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn deserialize_string8() {
+        let size = 200;
+        let mut input = Cursor::new((0..size).fold(
+            vec![m::STRING_8, 0xC8],
+            |mut acc, _| { acc.push(b'A'); acc }
+        ));
+
+        let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
+        let result: String = decode(&mut input).unwrap();
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn deserialize_tiny_string() {
+        for marker in 0x80..0x8F {
+            let size = marker - m::TINY_STRING_NIBBLE;
+            let mut input = Cursor::new((0..size).fold(
+                vec![marker],
+                |mut acc, _| { acc.push(b'A'); acc }
+            ));
+
+            let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
+            let result: String = decode(&mut input).unwrap();
+
+            assert_eq!(expected, result);
+        }
+    }
+
+    #[test]
+    fn deserialize_char() {
+        for c in b'A'..b'Z' {
+            let mut input = Cursor::new(vec![0x81, c]);
+            let result: char = decode(&mut input).unwrap();
+
+            assert_eq!(c as char, result);
+        }
     }
 }
