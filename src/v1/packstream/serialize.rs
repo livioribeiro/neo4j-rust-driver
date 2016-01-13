@@ -699,15 +699,19 @@ mod tests {
         let size = 70_000;
         let input = (0..size).fold(
             BTreeMap::<String, u32>::new(),
-            |mut acc, i| { acc.insert(format!("A{}", i), 1); acc }
+            |mut acc, i| { acc.insert(format!("{:05}", i), 1); acc }
         );
 
         let result = encode(&input).unwrap();
-        let expected = input.keys().fold(
+        let expected = (0..size).fold(
             vec![m::MAP_32, 0x00, 0x01, 0x11, 0x70],
             |mut acc, i| {
-                acc.append(&mut encode(&i).unwrap());
-                acc.push(0x01);
+                let b1 = 48 + ((i % 100000) / 10000) as u8;
+                let b2 = 48 + ((i % 10000) / 1000) as u8;
+                let b3 = 48 + ((i % 1000) / 100) as u8;
+                let b4 = 48 + ((i % 100) / 10) as u8;
+                let b5 = 48 + (i % 10) as u8;
+                acc.extend([0x85, b1, b2, b3, b4, b5, 0x01].iter());
                 acc
             }
         );
@@ -720,15 +724,18 @@ mod tests {
         let size = 5_000;
         let input = (0..size).fold(
             BTreeMap::<String, u32>::new(),
-            |mut acc, i| { acc.insert(format!("A{}", i), 1); acc }
+            |mut acc, i| { acc.insert(format!("{:04}", i), 1); acc }
         );
 
         let result = encode(&input).unwrap();
-        let expected = input.keys().fold(
+        let expected = (0..size).fold(
             vec![m::MAP_16, 0x13, 0x88],
             |mut acc, i| {
-                acc.append(&mut encode(&i).unwrap());
-                acc.push(0x01);
+                let b1 = 48 + ((i % 10000) / 1000) as u8;
+                let b2 = 48 + ((i % 1000) / 100) as u8;
+                let b3 = 48 + ((i % 100) / 10) as u8;
+                let b4 = 48 + (i % 10) as u8;
+                acc.extend([0x84, b1, b2, b3, b4, 0x01].iter());
                 acc
             }
         );
@@ -741,15 +748,17 @@ mod tests {
         let size = 200;
         let input = (0..size).fold(
             BTreeMap::<String, u32>::new(),
-            |mut acc, i| { acc.insert(format!("A{}", i), 1); acc }
+            |mut acc, i| { acc.insert(format!("{:03}", i), 1); acc }
         );
 
         let result = encode(&input).unwrap();
-        let expected = input.keys().fold(
+        let expected = (0..size).fold(
             vec![m::MAP_8, 0xC8],
             |mut acc, i| {
-                acc.append(&mut encode(&i).unwrap());
-                acc.push(0x01);
+                let b1 = 48 + ((i % 1000) / 100) as u8;
+                let b2 = 48 + ((i % 100) / 10) as u8;
+                let b3 = 48 + (i % 10) as u8;
+                acc.extend([0x83, b1, b2, b3, 0x01].iter());
                 acc
             }
         );
@@ -762,14 +771,14 @@ mod tests {
         let size = 3;
         let input = (0..size).fold(
             BTreeMap::<String, u32>::new(),
-            |mut acc, i| { acc.insert(format!("A{}", i), 1); acc }
+            |mut acc, i| { acc.insert(format!("{}", i), 1); acc }
         );
 
         let result = encode(&input).unwrap();
-        let expected = input.keys().fold(
+        let expected = (0..size).fold(
             vec![m::TINY_MAP_NIBBLE + size],
             |mut acc, i| {
-                acc.append(&mut encode(&i).unwrap());
+                acc.extend([0x81, 0x30 + i].iter());
                 acc.push(0x01);
                 acc
             }
@@ -845,7 +854,7 @@ mod tests {
         let expected = vec![m::TINY_MAP_NIBBLE + size,
                             0x81, 0x41, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
                             0x81, 0x42, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                            0x81, 0x43, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,];
+                            0x81, 0x43, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A];
 
         assert_eq!(expected, result);
     }
@@ -1011,7 +1020,7 @@ mod tests {
                             0x81, 0x41, 0x01, 0x81, 0x42, 0x01, 0x81, 0x43, 0x01, 0x81, 0x44, 0x01,
                             0x81, 0x45, 0x01, 0x81, 0x46, 0x01, 0x81, 0x47, 0x01, 0x81, 0x48, 0x01,
                             0x81, 0x49, 0x01, 0x81, 0x4A, 0x01, 0x81, 0x4B, 0x01, 0x81, 0x4C, 0x01,
-                            0x81, 0x4D, 0x01, 0x81, 0x4E, 0x01, 0x81, 0x4F, 0x01, 0x81, 0x50, 0x01,];
+                            0x81, 0x4D, 0x01, 0x81, 0x4E, 0x01, 0x81, 0x4F, 0x01, 0x81, 0x50, 0x01];
 
         assert_eq!(expected, result);
     }
