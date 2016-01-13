@@ -383,10 +383,16 @@ impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
         let mut buf = [0u8; 4096];
         let mut store: Vec<u8> = Vec::with_capacity(size);
 
-        let loops = (size as f32 / 4096.0).ceil() as usize;
+        let loops = (size as f32 / 4096.0).floor() as usize;
         for _ in 0..loops {
             let bytes = try!(self.reader.read(&mut buf));
             store.extend(buf[0..bytes].iter());
+        }
+
+        if size % 4096 > 0 {
+            let mut buf = vec![0u8; size % 4096];
+            try!(self.reader.read(&mut buf));
+            store.append(&mut buf);
         }
 
         String::from_utf8(store).map_err(From::from)
@@ -930,5 +936,86 @@ mod tests {
 
             assert_eq!(c as char, result);
         }
+    }
+
+    #[test]
+    fn deserialize_list32() {
+        let size = 70_000;
+        let mut input = Cursor::new((0..size).fold(
+            vec![m::LIST_32, 0x00, 0x01, 0x11, 0x70],
+            |mut acc, _| { acc.push(0x01); acc }
+        ));
+
+        let expected = vec![1; size];
+        let result: Vec<u32> = decode(&mut input).unwrap();
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn deserialize_list16() {
+        let size = 5_000;
+        let mut input = Cursor::new((0..size).fold(
+            vec![m::LIST_16, 0x13, 0x88],
+            |mut acc, _| { acc.push(0x01); acc }
+        ));
+
+        let expected = vec![1; size];
+        let result: Vec<u32> = decode(&mut input).unwrap();
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn deserialize_list8() {
+        let size = 200;
+        let mut input = Cursor::new((0..size).fold(
+            vec![m::LIST_8, 0xC8],
+            |mut acc, _| { acc.push(0x01); acc }
+        ));
+
+        let expected = vec![1; size];
+        let result: Vec<u32> = decode(&mut input).unwrap();
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn deserialize_tiny_list() {
+        for marker in 0x90..0x9F {
+            let size = (marker - m::TINY_LIST_NIBBLE) as usize;
+            let mut input = Cursor::new((0..size).fold(
+                vec![marker],
+                |mut acc, _| { acc.push(0x01); acc }
+            ));
+
+            let expected = vec![1; size];
+            let result: Vec<u32> = decode(&mut input).unwrap();
+
+            assert_eq!(expected, result);
+        }
+    }
+
+    #[test]
+    fn deserialize_list_of_string() {
+        let size = 3;
+
+        let mut input = Cursor::new(vec![m::TINY_LIST_NIBBLE + size as u8,
+                                    m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                                    0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
+                                    0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
+                                    0x77, 0x78, 0x79, 0x7A,
+                                    m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                                    0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
+                                    0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
+                                    0x77, 0x78, 0x79, 0x7A,
+                                    m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                                    0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
+                                    0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
+                                    0x77, 0x78, 0x79, 0x7A]);
+
+        let result: Vec<String> = decode(&mut input).unwrap();
+        let expected = vec!["abcdefghijklmnopqrstuvwxyz"; size];
+        assert_eq!(expected, result);
     }
 }
