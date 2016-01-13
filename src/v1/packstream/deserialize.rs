@@ -843,4 +843,18 @@ mod tests {
         let mut input = Cursor::new(vec![0xF0]);
         let _: u8 = decode(&mut input).unwrap();
     }
+
+    #[test]
+    fn deserialize_float_positive() {
+        let mut input = Cursor::new(vec![m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]);
+        let result: f64 = decode(&mut input).unwrap();
+        assert_eq!(1.1, result);
+    }
+
+    #[test]
+    fn deserialize_float_negative() {
+        let mut input = Cursor::new(vec![m::FLOAT, 0xBF, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]);
+        let result: f64 = decode(&mut input).unwrap();
+        assert_eq!(-1.1, result);
+    }
 }
