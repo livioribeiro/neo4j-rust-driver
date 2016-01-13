@@ -22,7 +22,7 @@ fn is_tiny_int(b: u8) -> bool { is_tiny_int_pos(b) || is_tiny_int_neg(b) }
 
 fn read_tiny_int(int: u8) -> i8 {
     if is_tiny_int_pos(int) { int as i8 }
-    else { -((int & 0b0000_1111) as i8) }
+    else { (int | 0b1111_0000) as i8 }
 }
 
 fn is_tiny_string(b: u8) -> bool { b >> 4 == m::TINY_STRING_NIBBLE >> 4 }
@@ -670,13 +670,6 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_small_int_int64_positive() {
-        let mut input = Cursor::new(vec![0x01]);
-        let result: u64 = decode(&mut input).unwrap();
-        assert_eq!(1, result);
-    }
-
-    #[test]
     fn deserialize_int64_negative() {
         let mut input = Cursor::new(vec![m::INT_64, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
         let result: i64 = decode(&mut input).unwrap();
@@ -684,8 +677,15 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_small_int_int64_negative() {
-        let mut input = Cursor::new(vec![0xF1]);
+    fn deserialize_small_int_into_int64_positive() {
+        let mut input = Cursor::new(vec![0x01]);
+        let result: u64 = decode(&mut input).unwrap();
+        assert_eq!(1, result);
+    }
+
+    #[test]
+    fn deserialize_small_int_into_int64_negative() {
+        let mut input = Cursor::new(vec![0xFF]);
         let result: i64 = decode(&mut input).unwrap();
         assert_eq!(-1, result);
     }
@@ -693,7 +693,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "UnexpectedInput(\"+INT_64\", \"-INTEGER\")")]
     fn negative_int_into_u64_should_panic() {
-        let mut input = Cursor::new(vec![0xF1]);
+        let mut input = Cursor::new(vec![0xFF]);
         let _: u64 = decode(&mut input).unwrap();
     }
 
@@ -720,22 +720,22 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_small_int_int32_positive() {
+    fn deserialize_int32_negative() {
+        let mut input = Cursor::new(vec![m::INT_32, 0x80, 0x00, 0x00, 0x00]);
+        let result: i32 = decode(&mut input).unwrap();
+        assert_eq!(m::RANGE_NEG_INT_32.0 as i32, result);
+    }
+
+    #[test]
+    fn deserialize_small_int_into_int32_positive() {
         let mut input = Cursor::new(vec![0x01]);
         let result: u32 = decode(&mut input).unwrap();
         assert_eq!(1, result);
     }
 
     #[test]
-    fn deserialize_int32_negative() {
-        let mut input = Cursor::new(vec![m::INT_32, 0x80, 0x00, 0x00, 0x00]);
-        let result: i64 = decode(&mut input).unwrap();
-        assert_eq!(m::RANGE_NEG_INT_32.0, result);
-    }
-
-    #[test]
-    fn deserialize_small_int_int32_negative() {
-        let mut input = Cursor::new(vec![0xF1]);
+    fn deserialize_small_int_into_int32_negative() {
+        let mut input = Cursor::new(vec![0xFF]);
         let result: i32 = decode(&mut input).unwrap();
         assert_eq!(-1, result);
     }
@@ -743,7 +743,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "UnexpectedInput(\"+INT_32\", \"-INTEGER\")")]
     fn negative_int_into_u32_should_panic() {
-        let mut input = Cursor::new(vec![0xF1]);
+        let mut input = Cursor::new(vec![0xFF]);
         let _: u32 = decode(&mut input).unwrap();
     }
 
@@ -759,5 +759,88 @@ mod tests {
     fn negative_int32_into_smaller_should_fail() {
         let mut input = Cursor::new(vec![m::INT_32, 0x80, 0x00, 0x00, 0x00]);
         let _: i16 = decode(&mut input).unwrap();
+    }
+
+    // Integer 16
+    #[test]
+    fn deserialize_int16_positive() {
+        let mut input = Cursor::new(vec![m::INT_16, 0x7F, 0xFF]);
+        let result: u16 = decode(&mut input).unwrap();
+        assert_eq!(m::RANGE_POS_INT_16.1 as u16, result);
+    }
+
+    #[test]
+    fn deserialize_int16_negative() {
+        let mut input = Cursor::new(vec![m::INT_16, 0x80, 0x00]);
+        let result: i16 = decode(&mut input).unwrap();
+        assert_eq!(m::RANGE_NEG_INT_16.0 as i16, result);
+    }
+
+    #[test]
+    fn deserialize_small_int_int16_positive() {
+        let mut input = Cursor::new(vec![0x01]);
+        let result: u16 = decode(&mut input).unwrap();
+        assert_eq!(1, result);
+    }
+
+    #[test]
+    fn deserialize_small_int_into_int16_negative() {
+        let mut input = Cursor::new(vec![0xFF]);
+        let result: i16 = decode(&mut input).unwrap();
+        assert_eq!(-1, result);
+    }
+
+    #[test]
+    #[should_panic(expected = "UnexpectedInput(\"+INT_16\", \"-INTEGER\")")]
+    fn negative_int_into_u16_should_panic() {
+        let mut input = Cursor::new(vec![0xFF]);
+        let _: u16 = decode(&mut input).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "UnexpectedMarker(\"INT_8\", \"INT_16\")")]
+    fn positive_int16_into_smaller_should_fail() {
+        let mut input = Cursor::new(vec![m::INT_16, 0x7F, 0xFF]);
+        let _: u8 = decode(&mut input).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "UnexpectedMarker(\"INT_8\", \"INT_16\")")]
+    fn negative_int16_into_smaller_should_fail() {
+        let mut input = Cursor::new(vec![m::INT_16, 0x80, 0x00]);
+        let _: i8 = decode(&mut input).unwrap();
+    }
+
+    // Integer 8
+    #[test]
+    fn deserialize_int8_positive() {
+        let mut input = Cursor::new(vec![0x7F]);
+        let result: u8 = decode(&mut input).unwrap();
+        assert_eq!(m::RANGE_TINY_INT.1 as u8, result);
+    }
+
+    #[test]
+    fn deserialize_int8_negative() {
+        let mut input = Cursor::new(vec![m::INT_8, 0x80]);
+        let result: i8 = decode(&mut input).unwrap();
+        assert_eq!(m::RANGE_NEG_INT_8.0 as i8, result);
+
+        let mut input = Cursor::new(vec![0xF0]);
+        let result: i8 = decode(&mut input).unwrap();
+        assert_eq!(m::RANGE_TINY_INT.0 as i8, result);
+    }
+
+    #[test]
+    #[should_panic(expected = "UnexpectedInput(\"+INT_8\", \"-INTEGER\")")]
+    fn negative_int_into_u8_should_panic() {
+        let mut input = Cursor::new(vec![m::INT_8, 0x80]);
+        let _: u8 = decode(&mut input).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "UnexpectedInput(\"+INT_8\", \"-INTEGER\")")]
+    fn negative_small_int_into_u8_should_panic() {
+        let mut input = Cursor::new(vec![0xF0]);
+        let _: u8 = decode(&mut input).unwrap();
     }
 }
