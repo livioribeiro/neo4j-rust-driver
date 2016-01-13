@@ -9,6 +9,15 @@ use super::marker as m;
 
 const STRUCTURE_PREFIX: &'static str = "__STRUCTURE__";
 
+pub fn encode<T: Encodable>(object: &T) -> EncodeResult<Vec<u8>> {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut encoder = PackstreamEncoder::new(&mut buf);
+        try!(object.encode(&mut encoder));
+    }
+    Ok(buf.into_inner())
+}
+
 #[derive(Debug)]
 pub enum EncoderError {
     EncodingError(byteorder::Error),
@@ -40,15 +49,6 @@ impl From<io::Error> for EncoderError {
 }
 
 pub type EncodeResult<T> = Result<T, EncoderError>;
-
-pub fn encode<T: Encodable>(object: &T) -> EncodeResult<Vec<u8>> {
-    let mut buf = Cursor::new(Vec::new());
-    {
-        let mut encoder = PackstreamEncoder::new(&mut buf);
-        try!(object.encode(&mut encoder));
-    }
-    Ok(buf.into_inner())
-}
 
 struct PackstreamEncoder<'a, W: Write + 'a> {
     writer: &'a mut W,

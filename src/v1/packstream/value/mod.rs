@@ -7,7 +7,7 @@ pub mod serialize;
 
 pub use self::serialize::to_value;
 
-#[derive(Clone, PartialEq, PartialOrd, Debug)]
+#[derive(Clone, PartialEq, PartialOrd, Debug, RustcDecodable)]
 pub enum Value {
     Null,
     Boolean(bool),
