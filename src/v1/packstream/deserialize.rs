@@ -280,6 +280,12 @@ impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
         Ok(value as u8)
     }
 
+    #[cfg(target_pointer_width = "32")]
+    fn read_isize(&mut self) -> Result<isize, Self::Error> {
+        self.read_i32().map(|v| v as isize)
+    }
+
+    #[cfg(target_pointer_width = "64")]
     fn read_isize(&mut self) -> Result<isize, Self::Error> {
         self.read_i64().map(|v| v as isize)
     }
