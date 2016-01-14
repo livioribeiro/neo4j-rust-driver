@@ -168,7 +168,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
     }
 
     fn emit_char(&mut self, v: char) -> Result<(), Self::Error> {
-        try!(self.writer.write_u8(m::TINY_STRING_NIBBLE + 1));
+        try!(self.writer.write_u8(m::TINY_STRING_NIBBLE | 0x01));
         try!(self.writer.write_u8(v as u8));
 
         Ok(())
@@ -179,7 +179,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
         let size = bytes.len();
 
         if size <= m::USE_TINY_STRING {
-            try!(self.writer.write_u8(m::TINY_STRING_NIBBLE + size as u8));
+            try!(self.writer.write_u8(m::TINY_STRING_NIBBLE | size as u8));
         } else if size <= m::USE_STRING_8 {
             try!(self.writer.write_u8(m::STRING_8));
             try!(self.writer.write_u8(size as u8));
@@ -212,10 +212,8 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
         if len == 0 {
             self.emit_str(v_name)
         } else {
-            try!(self.writer.write_u8(m::TINY_MAP_NIBBLE | 0x02));
-            try!(self.emit_str("variant"));
+            try!(self.writer.write_u8(m::TINY_MAP_NIBBLE | 0x01));
             try!(self.emit_str(v_name));
-            try!(self.emit_str("fields"));
             self.emit_seq(len, f)
         }
     }
@@ -335,7 +333,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
         if len <= m::USE_TINY_LIST as usize {
-            try!(self.writer.write_u8(m::TINY_LIST_NIBBLE + len as u8));
+            try!(self.writer.write_u8(m::TINY_LIST_NIBBLE | len as u8));
         } else if len <= m::USE_LIST_8 as usize {
             try!(self.writer.write_u8(m::LIST_8));
             try!(self.writer.write_u8(len as u8));
@@ -359,7 +357,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
             if len <= m::USE_TINY_MAP as usize {
-                try!(self.writer.write_u8(m::TINY_MAP_NIBBLE + len as u8));
+                try!(self.writer.write_u8(m::TINY_MAP_NIBBLE | len as u8));
             } else if len <= m::USE_MAP_8 as usize {
                 try!(self.writer.write_u8(m::MAP_8));
                 try!(self.writer.write_u8(len as u8));
@@ -1077,10 +1075,8 @@ mod tests {
         let input = MyEnum::A(1, 2);
 
         let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_MAP_NIBBLE | 0x02,
-                            0x87, b'v', b'a', b'r', b'i', b'a', b'n', b't',
+        let expected = vec![m::TINY_MAP_NIBBLE + 0x01,
                             0x81, 0x41,
-                            0x86, b'f', b'i', b'e', b'l', b'd', b's',
                             0x92, 0x01, 0x02];
 
         assert_eq!(expected, result);

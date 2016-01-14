@@ -428,21 +428,11 @@ impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
         if is_string(marker) {
             name = try!(self.read_string_data(marker));
         } else if is_tiny_map(marker) {
-            let size = 2;
-            debug_assert!(size == marker & 0b0000_1111, "Invalid enum variant");
-
-            let variant = try!(self.read_str());
-            if variant != "variant" {
-                return wrong_input!("String(\"variant\")".to_owned(), format!("String(\"{}\")", variant))
+            let size = 1;
+            if size != marker & 0b0000_1111 {
+                return wrong_input!("Map(1)".to_owned(), format!("Map({})", marker & 0b0000_1111))
             }
-
             name = try!(self.read_str());
-
-            let variant_fields = try!(self.read_str());
-            if variant_fields != "fields" {
-                return wrong_input!("String(\"fields\")".to_owned(), format!("String(\"{}\")", variant))
-            }
-
             try!(self.read_seq(|_, _| Ok(())));
         } else {
             return wrong_marker!("ENUM_VARIANT".to_owned(), marker)
@@ -1530,16 +1520,29 @@ mod tests {
             A(u16, u16), B(f32, f32),
         }
 
-        let mut input = Cursor::new(vec![m::TINY_MAP_NIBBLE | 0x02,
-            0x87, b'v', b'a', b'r', b'i', b'a', b'n', b't',
-            0x81, 0x41,
-            0x86, b'f', b'i', b'e', b'l', b'd', b's',
-            0x92, 0x01, 0x02
-        ]);
+        let mut input = Cursor::new(vec![m::TINY_MAP_NIBBLE + 0x01,
+                                         0x81, 0x41,
+                                         0x92, 0x01, 0x02]);
 
         let expected = MyEnum::A(1, 2);
         let result: MyEnum = decode(&mut input).unwrap();
 
         assert_eq!(expected, result);
+    }
+
+    #[test]
+    #[should_panic(expected = "UnexpectedInput(\"Map(1)\", \"Map(2)\")")]
+    fn enum_tuple_variant_with_wrong_map_size_should_fail() {
+        #[derive(RustcDecodable, Debug, PartialEq)]
+        enum MyEnum {
+            A(u16, u16), B(f32, f32),
+        }
+
+        let mut input = Cursor::new(vec![m::TINY_MAP_NIBBLE + 0x02,
+                                         0x81, 0x41,
+                                         0x92, 0x01, 0x02]);
+
+        let expected = MyEnum::A(1, 2);
+        let _: MyEnum = decode(&mut input).unwrap();
     }
 }
