@@ -4,6 +4,7 @@ use std::string;
 use rustc_serialize::{Encodable, Encoder};
 
 pub mod serialize;
+pub mod builder;
 
 pub use self::serialize::to_value;
 
