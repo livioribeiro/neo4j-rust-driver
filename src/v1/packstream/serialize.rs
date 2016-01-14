@@ -1070,11 +1070,11 @@ mod tests {
     #[test]
     fn serialize_enum_tuple_variant() {
         #[derive(RustcEncodable)]
-        enum A {
+        enum MyEnum {
             A(u16, u16),
         }
 
-        let input = A::A(1, 2);
+        let input = MyEnum::A(1, 2);
 
         let result = encode(&input).unwrap();
         let expected = vec![m::TINY_MAP_NIBBLE | 0x02,

@@ -177,6 +177,44 @@ impl<'a, R: Read> PackstreamDecoder<'a, R> {
             struct_stack: Vec::new(),
         }
     }
+
+    fn read_string_data(&mut self, marker: u8) -> Result<String, DecoderError> {
+        let size;
+        if is_tiny_string(marker) {
+            size = (marker & 0b0000_1111) as usize;
+        } else if marker == m::STRING_8 {
+            size = try!(self.reader.read_u8()) as usize;
+        } else if marker == m::STRING_16 {
+            size = try!(self.reader.read_u16::<BigEndian>()) as usize;
+        } else if marker == m::STRING_32 {
+            size = try!(self.reader.read_u32::<BigEndian>()) as usize;
+        } else {
+            return wrong_marker!("STRING".to_owned(), marker)
+        }
+
+        let mut store;
+        if size < 4096 {
+            store = vec![0u8; size];
+            try!(self.reader.read(&mut store));
+        } else {
+            store = Vec::with_capacity(size);
+            let mut buf = [0u8; 4096];
+
+            let loops = (size as f32 / 4096.0).floor() as usize;
+            for _ in 0..loops {
+                let bytes = try!(self.reader.read(&mut buf));
+                store.extend(buf[0..bytes].iter());
+            }
+
+            if size % 4096 > 0 {
+                let mut buf = vec![0u8; size % 4096];
+                try!(self.reader.read(&mut buf));
+                store.append(&mut buf);
+            }
+        }
+
+        String::from_utf8(store).map_err(From::from)
+    }
 }
 
 impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
@@ -367,35 +405,11 @@ impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
     fn read_str(&mut self) -> Result<String, Self::Error> {
         let marker = try!(self.reader.read_u8());
 
-        let size: usize;
-        if is_tiny_string(marker) {
-            size = (marker & 0b0000_1111) as usize;
-        } else if marker == m::STRING_8 {
-            size = try!(self.reader.read_u8()) as usize;
-        } else if marker == m::STRING_16 {
-            size = try!(self.reader.read_u16::<BigEndian>()) as usize;
-        } else if marker == m::STRING_32 {
-            size = try!(self.reader.read_u32::<BigEndian>()) as usize;
-        } else {
+        if !is_string(marker) {
             return wrong_marker!("STRING".to_owned(), marker)
         }
 
-        let mut buf = [0u8; 4096];
-        let mut store: Vec<u8> = Vec::with_capacity(size);
-
-        let loops = (size as f32 / 4096.0).floor() as usize;
-        for _ in 0..loops {
-            let bytes = try!(self.reader.read(&mut buf));
-            store.extend(buf[0..bytes].iter());
-        }
-
-        if size % 4096 > 0 {
-            let mut buf = vec![0u8; size % 4096];
-            try!(self.reader.read(&mut buf));
-            store.append(&mut buf);
-        }
-
-        String::from_utf8(store).map_err(From::from)
+        self.read_string_data(marker)
     }
 
     // Compound types:
@@ -412,27 +426,24 @@ impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
         let marker = try!(self.reader.read_u8());
         let name: String;
         if is_string(marker) {
-            let size: usize;
-            if is_tiny_string(marker) {
-                size = (marker & 0b0000_1111) as usize;
-            } else if marker == m::STRING_8 {
-                size = try!(self.reader.read_u8()) as usize;
-            } else if marker == m::STRING_16 {
-                size = try!(self.reader.read_u16::<BigEndian>()) as usize;
-            } else if marker == m::STRING_32 {
-                size = try!(self.reader.read_u32::<BigEndian>()) as usize;
-            } else {
-                return wrong_marker!("STRING".to_owned(), marker)
-            }
-
-            let mut buf: Vec<u8> = Vec::with_capacity(size);
-            try!(self.reader.read(&mut buf));
-
-            name = try!(String::from_utf8(buf));
+            name = try!(self.read_string_data(marker));
         } else if is_tiny_map(marker) {
             let size = 2;
             debug_assert!(size == marker & 0b0000_1111, "Invalid enum variant");
+
+            let variant = try!(self.read_str());
+            if variant != "variant" {
+                return wrong_input!("String(\"variant\")".to_owned(), format!("String(\"{}\")", variant))
+            }
+
             name = try!(self.read_str());
+
+            let variant_fields = try!(self.read_str());
+            if variant_fields != "fields" {
+                return wrong_input!("String(\"fields\")".to_owned(), format!("String(\"{}\")", variant))
+            }
+
+            try!(self.read_seq(|_, _| Ok(())));
         } else {
             return wrong_marker!("ENUM_VARIANT".to_owned(), marker)
         }
@@ -1466,6 +1477,68 @@ mod tests {
         };
 
         let result: MyStruct = decode(&mut input).unwrap();
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn deserialize_structure() {
+        #[derive(RustcDecodable, Debug, PartialEq)]
+        #[allow(non_snake_case)]
+        struct MyStruct {
+            A: u32,
+            B: f64,
+            C: String,
+        }
+
+        let mut input = Cursor::new(vec![m::TINY_STRUCT_NIBBLE + 0x03,
+            0x01,
+            m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+            0x81, 0x43
+        ]);
+
+        let expected = MyStruct {
+            A: 1,
+            B: 1.1,
+            C: "C".to_owned(),
+        };
+
+        let result: MyStruct = decode(&mut input).unwrap();
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn deserialize_enum() {
+        #[derive(RustcDecodable, Debug, PartialEq)]
+        enum MyEnum {
+            A, B,
+        }
+
+        let mut input = Cursor::new(vec![0x81, 0x41]);
+
+        let expected = MyEnum::A;
+        let result: MyEnum = decode(&mut input).unwrap();
+
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn deserialize_enum_tuple_variant() {
+        #[derive(RustcDecodable, Debug, PartialEq)]
+        enum MyEnum {
+            A(u16, u16), B(f32, f32),
+        }
+
+        let mut input = Cursor::new(vec![m::TINY_MAP_NIBBLE | 0x02,
+            0x87, b'v', b'a', b'r', b'i', b'a', b'n', b't',
+            0x81, 0x41,
+            0x86, b'f', b'i', b'e', b'l', b'd', b's',
+            0x92, 0x01, 0x02
+        ]);
+
+        let expected = MyEnum::A(1, 2);
+        let result: MyEnum = decode(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
