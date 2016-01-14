@@ -22,7 +22,6 @@ pub fn encode<T: Encodable>(object: &T) -> EncodeResult<Vec<u8>> {
 pub enum EncoderError {
     EncodingError(byteorder::Error),
     IoError(io::Error),
-    UnknownMessage,
     InvalidStructureLength,
 }
 
@@ -252,11 +251,10 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
                       -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
-        use super::super::protocol;
-
         if name.starts_with(STRUCTURE_PREFIX) {
-            let name = &name[STRUCTURE_PREFIX.len()..name.len()];
-            let signature = try!(protocol::signature(name).ok_or(EncoderError::UnknownMessage));
+            debug_assert!(name.len() == STRUCTURE_PREFIX.len() + 1, "Invalid structure name: '{}'", name);
+            // it is garanteed that the name is not empty
+            let signature = *name.as_bytes().last().unwrap();
 
             if len <= m::USE_TINY_STRUCT {
                 try!(self.writer.write_u8(m::TINY_STRUCT_NIBBLE | len as u8));

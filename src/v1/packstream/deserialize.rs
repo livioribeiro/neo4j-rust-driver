@@ -1542,7 +1542,6 @@ mod tests {
                                          0x81, 0x41,
                                          0x92, 0x01, 0x02]);
 
-        let expected = MyEnum::A(1, 2);
         let _: MyEnum = decode(&mut input).unwrap();
     }
 }

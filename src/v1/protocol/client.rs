@@ -4,10 +4,19 @@ use rustc_serialize::{Encodable, Encoder};
 use ::v1::packstream::value::{self, Value};
 
 const INIT_SIZE: usize = 1;
+const INIT_SIG: &'static str = "__STRUCTURE__\x01";
+
 const RUN_SIZE: usize = 2;
+const RUN_SIG: &'static str = "__STRUCTURE__\x10";
+
 const DISCARD_ALL_SIZE: usize = 0;
+const DISCARD_ALL_SIG: &'static str = "__STRUCTURE__\x2F";
+
 const PULL_ALL_SIZE: usize = 0;
+const PULL_ALL_SIG: &'static str = "__STRUCTURE__\x3F";
+
 const ACK_FAILURE_SIZE: usize = 0;
+const ACK_FAILURE_SIG: &'static str = "__STRUCTURE__\x0F";
 
 pub struct Init {
     client_name: String,
@@ -23,7 +32,7 @@ impl Init {
 
 impl Encodable for Init {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
-        try!(e.emit_struct("__STRUCTURE__INIT", INIT_SIZE as usize, |_| Ok(())));
+        try!(e.emit_struct(INIT_SIG, INIT_SIZE, |_| Ok(())));
         try!(self.client_name.encode(e));
 
         Ok(())
@@ -55,7 +64,7 @@ impl Run {
 
 impl Encodable for Run {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
-        try!(e.emit_struct("__STRUCTURE__RUN", RUN_SIZE, |_| Ok(())));
+        try!(e.emit_struct(RUN_SIG, RUN_SIZE, |_| Ok(())));
         try!(self.statement.encode(e));
         try!(self.parameters.encode(e));
 
@@ -67,7 +76,7 @@ pub struct DiscardAll;
 
 impl Encodable for DiscardAll {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
-        e.emit_struct("__STRUCTURE__DISCARD_ALL", DISCARD_ALL_SIZE, |_| Ok(()))
+        e.emit_struct(DISCARD_ALL_SIG, DISCARD_ALL_SIZE, |_| Ok(()))
     }
 }
 
@@ -75,7 +84,7 @@ pub struct PullAll;
 
 impl Encodable for PullAll {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
-        e.emit_struct("__STRUCTURE__PULL_ALL", PULL_ALL_SIZE, |_| Ok(()))
+        e.emit_struct(PULL_ALL_SIG, PULL_ALL_SIZE, |_| Ok(()))
     }
 }
 
@@ -83,7 +92,7 @@ pub struct AckFailure;
 
 impl Encodable for AckFailure {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
-        e.emit_struct("__STRUCTURE__ACK_FAILURE", ACK_FAILURE_SIZE, |_| Ok(()))
+        e.emit_struct(ACK_FAILURE_SIG, ACK_FAILURE_SIZE, |_| Ok(()))
     }
 }
 

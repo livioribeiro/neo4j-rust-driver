@@ -7,7 +7,7 @@ pub mod serialize;
 
 pub use self::serialize::to_value;
 
-#[derive(Clone, PartialEq, PartialOrd, Debug, RustcDecodable)]
+#[derive(Clone, PartialEq, PartialOrd, Debug)]
 pub enum Value {
     Null,
     Boolean(bool),
@@ -16,6 +16,7 @@ pub enum Value {
     String(string::String),
     List(self::List),
     Map(self::Map),
+    Structure(u8, self::List)
 }
 
 pub type List = Vec<Value>;
@@ -105,6 +106,24 @@ impl Value {
     pub fn is_map(&self) -> bool {
         self.as_map().is_some()
     }
+
+    pub fn as_struct(&self) -> Option<(u8, &List)> {
+        match self {
+            &Value::Structure(s, ref v) => Some((s, v)),
+            _ => None
+        }
+    }
+
+    pub fn as_struct_mut(&mut self) -> Option<(&mut u8, &mut List)> {
+        match self {
+            &mut Value::Structure(ref mut s, ref mut v) => Some((s, v)),
+            _ => None
+        }
+    }
+
+    pub fn is_struct(&self) -> bool {
+        self.as_struct().is_some()
+    }
 }
 
 impl Encodable for Value {
@@ -117,6 +136,11 @@ impl Encodable for Value {
             Value::String(ref v) => v.encode(e),
             Value::List(ref v) => v.encode(e),
             Value::Map(ref v) => v.encode(e),
+            Value::Structure(s, ref v) => {
+                try!(e.emit_struct(&format!("__STRUCTURE__{}", s as char), v.len(), |_| Ok(())));
+                for f in v { try!(f.encode(e)); }
+                Ok(())
+            }
         }
     }
 }
@@ -234,11 +258,41 @@ mod tests {
     #[test]
     fn serialize_map() {
         let closure = |mut acc: Map, i: i64| { acc.insert(format!("{}", i), Value::Integer(i)); acc };
+
         let input = (0..15).fold(Map::new(), &closure);
         assert_eq!(encode(&input).unwrap(), encode(&Value::Map(input)).unwrap());
 
         let input = (0..256).fold(Map::new(), &closure);
         assert_eq!(encode(&input).unwrap(), encode(&Value::Map(input)).unwrap());
+    }
+
+    #[test]
+    fn serialize_structure() {
+        use rustc_serialize::{Encodable, Encoder};
+
+        struct MyStruct {
+            name: String,
+            value: u32,
+        }
+
+        impl Encodable for MyStruct {
+            fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
+                try!(e.emit_struct("__STRUCTURE__\x22", 2, |_| Ok(())));
+                try!(self.name.encode(e));
+                self.value.encode(e)
+            }
+        }
+
+        let input = MyStruct {
+            name: "MyStruct".to_owned(),
+            value: 42,
+        };
+
+        let expected = Value::Structure(
+            0x22, vec![Value::String("MyStruct".to_owned()), Value::Integer(42)]
+        );
+
+        assert_eq!(encode(&input).unwrap(), encode(&expected).unwrap());
     }
 
     #[test]

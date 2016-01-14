@@ -1,7 +1,7 @@
 use std::net::TcpStream;
 
 use super::transport::ChunkedStream;
-use super::protocol::message::Init;
+use super::protocol::client::Init;
 use super::packstream::serialize::{encode, EncodeResult};
 
 pub struct Connection {
