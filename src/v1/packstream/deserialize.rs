@@ -495,8 +495,6 @@ impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
                 size = try!(self.reader.read_u32::<BigEndian>()) as usize;
             }
 
-
-
             struct_kind = StructKind::Regular;
         } else if is_structure(marker) {
             if is_tiny_structure(marker) {
@@ -505,10 +503,6 @@ impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
                 size = try!(self.reader.read_u8()) as usize + 1;
             } else {
                 size = try!(self.reader.read_u16::<BigEndian>()) as usize + 1;
-            }
-
-            if size != len { // 1 more field for the signature
-                return wrong_input!(format!("{} ({} fields)", s_name, len), format!("? ({} fields)", size))
             }
 
             struct_kind = StructKind::Structure;

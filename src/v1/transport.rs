@@ -1,7 +1,7 @@
 use std::io::prelude::*;
 use std::io::{self, Cursor};
 use std::net::TcpStream;
-use byteorder::{WriteBytesExt, BigEndian};
+use byteorder::{self, ReadBytesExt, WriteBytesExt, BigEndian};
 
 const MAX_CHUNK_SIZE: usize = 65535;
 
@@ -87,5 +87,25 @@ impl ChunkedStream {
         self.raw.get_mut().clear();
         self.raw.set_position(0);
         Ok(())
+    }
+
+    pub fn receive(&mut self) -> io::Result<Vec<u8>> {
+        let mut result: Vec<u8> = Vec::new();
+
+        loop {
+            let chunk_size = match self.socket.read_u16::<BigEndian>() {
+                Ok(value) => value,
+                Err(byteorder::Error::UnexpectedEOF) => break,
+                Err(byteorder::Error::Io(e)) => return Err(e),
+            };
+
+            if chunk_size == 0 { break }
+
+            let mut buf = vec![0u8; chunk_size as usize];
+            try!(self.socket.read(&mut buf));
+            result.append(&mut buf);
+        }
+
+        Ok(result)
     }
 }
