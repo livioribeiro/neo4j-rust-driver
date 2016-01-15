@@ -796,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_small_int_int16_positive() {
+    fn deserialize_small_int_into_int16_positive() {
         let mut input = Cursor::new(vec![0x01]);
         let result: u16 = decode(&mut input).unwrap();
         assert_eq!(1, result);

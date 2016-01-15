@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use rustc_serialize::{Encodable, Encoder};
 
 use super::Value;
+use super::super::STRUCTURE_PREFIX;
 
 // It is unlikely that the code here will fail, but if it does, it means that something really bad
 // happened that is out of our control.
@@ -155,11 +156,28 @@ impl Encoder for ValueEncoder {
         self.emit_map_elt_val(f_idx, f)
     }
 
-    fn emit_struct<F>(&mut self, _: &str, len: usize, f: F)
+    fn emit_struct<F>(&mut self, name: &str, len: usize, f: F)
                       -> Result<(), Self::Error>
         where F: FnOnce(&mut Self) -> Result<(), Self::Error> {
 
-        self.emit_map(len, f)
+        if name.starts_with(STRUCTURE_PREFIX) {
+            debug_assert!(name.len() == STRUCTURE_PREFIX.len() + 1, "Invalid structure name: '{}'", name);
+            // it is garanteed that the name is not empty
+            let signature = *name.as_bytes().last().unwrap();
+            try!(f(self));
+            try!(self.emit_seq(len, |_| Ok(())));
+            let values = self.stack.pop().unwrap_or_else(|| panic!("Unexpected end of struct"));
+
+            if let Value::List(values) = values {
+                self.stack.push(Value::Structure(signature, values));
+            } else {
+                panic!("Invalid structure data: {:?}", values);
+            }
+
+            Ok(())
+        } else {
+            self.emit_map(len, f)
+        }
     }
 
     fn emit_struct_field<F>(&mut self, f_name: &str, _: usize, f: F)
@@ -489,6 +507,36 @@ mod tests {
 
         let input = MyEnum::MyVariant(1, 1.1, "A".to_owned());
         let expected = Value::List(vec![Value::Integer(1), Value::Float(1.1), Value::String("A".to_owned())]);
+
+        assert_eq!(expected, to_value(&input));
+    }
+
+    #[test]
+    fn encode_structure() {
+        use rustc_serialize::{Encodable, Encoder};
+
+        struct MyStruct {
+            name: String,
+            value: u32,
+        }
+
+        impl Encodable for MyStruct {
+            fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
+                e.emit_struct("__STRUCTURE__\x22", 2, |e| {
+                    try!(self.name.encode(e));
+                    self.value.encode(e)
+                })
+            }
+        }
+
+        let input = MyStruct {
+            name: "MyStruct".to_owned(),
+            value: 42,
+        };
+
+        let expected = Value::Structure(
+            0x22, vec![Value::String("MyStruct".to_owned()), Value::Integer(42)]
+        );
 
         assert_eq!(expected, to_value(&input));
     }

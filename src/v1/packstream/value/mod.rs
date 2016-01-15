@@ -1,11 +1,13 @@
+use std::io::Read;
 use std::collections::BTreeMap;
 use std::convert::{From, Into};
 use std::string;
 use rustc_serialize::{Encodable, Encoder};
 
 pub mod serialize;
-pub mod builder;
+mod builder;
 
+use super::deserialize::DecodeResult;
 pub use self::serialize::to_value;
 
 #[derive(Clone, PartialEq, PartialOrd, Debug)]
@@ -24,6 +26,10 @@ pub type List = Vec<Value>;
 pub type Map = BTreeMap<String, Value>;
 
 impl Value {
+    pub fn from_reader<R: Read>(reader: &mut R) -> DecodeResult<Self> {
+        builder::from_reader(reader)
+    }
+
     pub fn is_null(&self) -> bool {
         *self == Value::Null
     }
@@ -138,9 +144,10 @@ impl Encodable for Value {
             Value::List(ref v) => v.encode(e),
             Value::Map(ref v) => v.encode(e),
             Value::Structure(s, ref v) => {
-                try!(e.emit_struct(&format!("__STRUCTURE__{}", s as char), v.len(), |_| Ok(())));
-                for f in v { try!(f.encode(e)); }
-                Ok(())
+                e.emit_struct(&format!("__STRUCTURE__{}", s as char), v.len(), |e| {
+                    for f in v { try!(f.encode(e)); }
+                    Ok(())
+                })
             }
         }
     }
