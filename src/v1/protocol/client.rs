@@ -32,10 +32,9 @@ impl Init {
 
 impl Encodable for Init {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
-        try!(e.emit_struct(INIT_SIG, INIT_SIZE, |_| Ok(())));
-        try!(self.client_name.encode(e));
-
-        Ok(())
+        e.emit_struct(INIT_SIG, INIT_SIZE, |e| {
+            self.client_name.encode(e)
+        })
     }
 }
 
@@ -64,11 +63,10 @@ impl Run {
 
 impl Encodable for Run {
     fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
-        try!(e.emit_struct(RUN_SIG, RUN_SIZE, |_| Ok(())));
-        try!(self.statement.encode(e));
-        try!(self.parameters.encode(e));
-
-        Ok(())
+        e.emit_struct(RUN_SIG, RUN_SIZE, |e| {
+            try!(self.statement.encode(e));
+            self.parameters.encode(e)
+        })
     }
 }
 

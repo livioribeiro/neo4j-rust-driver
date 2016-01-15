@@ -6,8 +6,7 @@ use rustc_serialize::{Encodable, Encoder};
 use byteorder::{self, WriteBytesExt, BigEndian};
 
 use super::marker as m;
-
-const STRUCTURE_PREFIX: &'static str = "__STRUCTURE__";
+use super::STRUCTURE_PREFIX;
 
 pub fn encode<T: Encodable>(object: &T) -> EncodeResult<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
@@ -271,7 +270,7 @@ impl<'a, W: Write> Encoder for PackstreamEncoder<'a, W> {
                 return Err(EncoderError::InvalidStructureLength)
             }
 
-            Ok(())
+            f(self)
         } else {
             self.emit_map(len, f)
         }

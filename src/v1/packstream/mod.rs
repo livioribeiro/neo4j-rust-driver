@@ -5,3 +5,5 @@ pub mod value;
 
 pub use self::serialize::encode;
 pub use self::value::Value;
+
+const STRUCTURE_PREFIX: &'static str = "__STRUCTURE__";
