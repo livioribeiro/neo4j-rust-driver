@@ -1482,19 +1482,21 @@ mod tests {
         #[derive(RustcDecodable, Debug, PartialEq)]
         #[allow(non_snake_case)]
         struct MyStruct {
+            signature: u8,
             A: u32,
             B: f64,
             C: String,
         }
 
-        let mut input = Cursor::new(vec![m::TINY_STRUCT_NIBBLE + 0x03,
-            0x01,
+        let mut input = Cursor::new(vec![m::TINY_STRUCT_NIBBLE + 0x04, 0x22,
+            0xC9, 0x7D, 0x00,
             m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
             0x81, 0x43
         ]);
 
         let expected = MyStruct {
-            A: 1,
+            signature: 0x22,
+            A: 32_000,
             B: 1.1,
             C: "C".to_owned(),
         };
