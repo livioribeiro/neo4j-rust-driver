@@ -322,39 +322,39 @@ mod tests {
         assert_eq!(Value::Float(-1.1), result);
     }
 
-    // #[test]
-    // fn decode_string32() {
-    //     let size = 70_000;
-    //     let mut input = Cursor::new((0..size).fold(
-    //         vec![m::STRING_32, 0x00, 0x01, 0x11, 0x70],
-    //         |mut acc, _| { acc.push(b'A'); acc }
-    //     ));
-    //
-    //     let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
-    //     let result = from_reader(&mut input).unwrap();
-    //
-    //     assert_eq!(Value::String(expected), result);
-    // }
-    //
-    // #[test]
-    // fn decode_string16() {
-    //     let size = 5_000;
-    //     let mut input = Cursor::new((0..size).fold(
-    //         vec![m::STRING_16, 0x13, 0x88],
-    //         |mut acc, _| { acc.push(b'A'); acc }
-    //     ));
-    //
-    //     let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
-    //     let result = from_reader(&mut input).unwrap();
-    //
-    //     assert_eq!(Value::String(expected), result);
-    // }
+    #[test]
+    fn decode_string32() {
+        let size = 70_000;
+        let mut input = Cursor::new((0..size).fold(
+            vec![m::STRING_32, 0x00, 0x01, 0x11, 0x70],
+            |mut acc, _| { acc.push(b'A'); acc }
+        ));
+
+        let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
+        let result = from_reader(&mut input).unwrap();
+
+        assert_eq!(Value::String(expected), result);
+    }
+
+    #[test]
+    fn decode_string16() {
+        let size = 5_000;
+        let mut input = Cursor::new((0..size).fold(
+            vec![m::STRING_16, 0x13, 0x88],
+            |mut acc, _| { acc.push(b'A'); acc }
+        ));
+
+        let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
+        let result = from_reader(&mut input).unwrap();
+
+        assert_eq!(Value::String(expected), result);
+    }
 
     #[test]
     fn decode_string8() {
-        let size = 100;
+        let size = 200;
         let mut input = Cursor::new((0..size).fold(
-            vec![m::STRING_8, 0x64],
+            vec![m::STRING_8, 0xC8],
             |mut acc, _| { acc.push(b'A'); acc }
         ));
 
