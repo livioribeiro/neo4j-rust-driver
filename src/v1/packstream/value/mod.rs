@@ -1,14 +1,18 @@
-use std::io::Read;
+use std::io::Cursor;
 use std::collections::BTreeMap;
 use std::convert::{From, Into};
 use std::string;
-use rustc_serialize::{Encodable, Encoder};
+// use rustc_serialize::{Encodable, Encoder};
+use serde::{Serializer, Serialize};
+use byteorder::{WriteBytesExt, BigEndian};
 
-pub mod serialize;
-mod builder;
+use super::marker as m;
 
-use super::deserialize::DecodeResult;
-pub use self::serialize::to_value;
+// pub mod serialize;
+// mod builder;
+
+// use super::deserialize::DecodeResult;
+// pub use self::serialize::to_value;
 
 #[derive(Clone, PartialEq, PartialOrd, Debug)]
 pub enum Value {
@@ -26,9 +30,9 @@ pub type List = Vec<Value>;
 pub type Map = BTreeMap<String, Value>;
 
 impl Value {
-    pub fn from_reader<R: Read>(reader: &mut R) -> DecodeResult<Self> {
-        builder::from_reader(reader)
-    }
+    // pub fn from_reader<R: Read>(reader: &mut R) -> DecodeResult<Self> {
+    //     builder::from_reader(reader)
+    // }
 
     pub fn is_null(&self) -> bool {
         *self == Value::Null
@@ -133,21 +137,46 @@ impl Value {
     }
 }
 
-impl Encodable for Value {
-    fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
+impl Serialize for Value {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         match *self {
-            Value::Null => e.emit_nil(),
-            Value::Boolean(v) => v.encode(e),
-            Value::Integer(v) => v.encode(e),
-            Value::Float(v) => v.encode(e),
-            Value::String(ref v) => v.encode(e),
-            Value::List(ref v) => v.encode(e),
-            Value::Map(ref v) => v.encode(e),
-            Value::Structure(s, ref v) => {
-                e.emit_struct(&format!("__STRUCTURE__{}", s as char), v.len(), |e| {
-                    for f in v { try!(f.encode(e)); }
-                    Ok(())
-                })
+            Value::Null => serializer.visit_unit(),
+            Value::Boolean(v) => v.serialize(serializer),
+            Value::Integer(v) => v.serialize(serializer),
+            Value::Float(v) => v.serialize(serializer),
+            Value::String(ref v) => v.serialize(serializer),
+            Value::List(ref v) => v.serialize(serializer),
+            Value::Map(ref v) => v.serialize(serializer),
+            Value::Structure(signature, ref v) => {
+                let mut cur: Cursor<Vec<u8>> = Cursor::new(Vec::with_capacity(4));
+                let len = v.len();
+                if len <= m::USE_TINY_STRUCT {
+                    cur.write_u8(m::TINY_STRUCT_NIBBLE | len as u8).unwrap();
+                    cur.write_u8(signature).unwrap();
+                } else if len <= m::USE_STRUCT_8 {
+                    cur.write_u8(m::STRUCT_8).unwrap();
+                    cur.write_u8(len as u8).unwrap();
+                    cur.write_u8(signature).unwrap();
+                // } else if len <= m::USE_STRUCT_16 {
+                } else {
+                    cur.write_u8(m::STRUCT_16).unwrap();
+                    cur.write_u16::<BigEndian>(len as u16).unwrap();
+                    cur.write_u8(signature).unwrap();
+                }
+                // } else {
+                //     return Err(EncoderError::InvalidStructureLength)
+                // }
+
+                let data = cur.into_inner();
+                try!(serializer.visit_bytes(data.as_ref()));
+
+                for i in v.iter() {
+                    try!(i.serialize(serializer));
+                }
+
+                Ok(())
             }
         }
     }
@@ -219,8 +248,10 @@ impl<'a, T: Into<Value>> From<BTreeMap<&'a str, T>> for Value {
 
 #[cfg(test)]
 mod tests {
+    use serde::{Serializer, Serialize};
     use ::v1::packstream::serialize::encode;
     use super::{Value, Map};
+    use super::super::marker as m;
 
     #[test]
     fn serialize_null() {
@@ -283,11 +314,14 @@ mod tests {
             value: u32,
         }
 
-        impl Encodable for MyStruct {
-            fn encode<S: Encoder>(&self, e: &mut S) -> Result<(), S::Error> {
-                try!(e.emit_struct("__STRUCTURE__\x22", 2, |_| Ok(())));
-                try!(self.name.encode(e));
-                self.value.encode(e)
+        impl Serialize for MyStruct {
+            fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+                where S: Serializer
+            {
+                let data = [m::TINY_STRUCT_NIBBLE | 0x02, 0x22];
+                try!(serializer.visit_bytes(&data));
+                try!(self.name.serialize(serializer));
+                self.value.serialize(serializer)
             }
         }
 
@@ -300,7 +334,7 @@ mod tests {
             0x22, vec![Value::String("MyStruct".to_owned()), Value::Integer(42)]
         );
 
-        assert_eq!(encode(&input).unwrap(), encode(&expected).unwrap());
+        assert_eq!(encode(&expected).unwrap(), encode(&input).unwrap());
     }
 
     #[test]
