@@ -4,14 +4,15 @@ use std::fmt;
 use std::io::prelude::*;
 use std::io;
 use std::string;
-use rustc_serialize::{Decodable, Decoder};
+// use rustc_serialize::{Decodable, Decoder};
+use serde::de::{Deserializer, Deserialize, Visitor};
 use byteorder::{self, ReadBytesExt, BigEndian};
 
 use super::marker as m;
 
-pub fn decode<T: Decodable, R: Read>(source: &mut R) -> DecodeResult<T> {
+pub fn decode<T: Deserialize, R: Read>(source: &mut R) -> DecodeResult<T> {
     let mut decoder = PackstreamDecoder::new(source);
-    Decodable::decode(&mut decoder)
+    Deserialize::deserialize(&mut decoder)
 }
 
 pub type DecodeResult<T> = Result<T, DecoderError>;
@@ -167,7 +168,8 @@ enum StructKind {
 
 pub struct PackstreamDecoder<'a, R: Read + 'a> {
     reader: &'a mut R,
-    struct_stack: Vec<StructKind>
+    struct_stack: Vec<StructKind>,
+    byte: Option<u8>,
 }
 
 impl<'a, R: Read> PackstreamDecoder<'a, R> {
@@ -175,10 +177,79 @@ impl<'a, R: Read> PackstreamDecoder<'a, R> {
         PackstreamDecoder {
             reader: reader,
             struct_stack: Vec::new(),
+            byte: None,
         }
     }
 
-    fn read_string_data(&mut self, marker: u8) -> Result<String, DecoderError> {
+    fn peek(&mut self) -> Result<u8, DecoderError> {
+        match self.byte {
+            Some(byte) => Ok(byte),
+            None => {
+                match self.reader.read_u8() {
+                    Ok(byte) => {
+                        self.byte = Some(byte);
+                        Ok(byte)
+                    },
+                    Err(e) => Err(From::from(e)),
+                }
+            }
+        }
+    }
+
+    fn bump(&mut self) {
+        self.byte.take();
+    }
+
+    fn parse_value<V>(&mut self, mut visitor: V) -> Result<V::Value>
+        where V: Visitor,
+    {
+        match try!(self.peek()) {
+            0x00...0x7F | 0xC8 | 0xC9 | 0xCA | 0xCB => {
+
+            }
+        }
+    }
+
+    fn parse_int(&mut self) -> Result<i64, DecoderError> {
+        let marker = try!(self.peek());
+
+        if !is_int64_or_lesser(marker) {
+            return wrong_marker!("INTEGER".to_owned(), marker)
+        }
+
+        let value: i64;
+        if is_tiny_int(marker) {
+            value = read_tiny_int(marker) as i64;
+        } else if marker == m::INT_8 {
+            let value_read = try!(self.reader.read_i8());
+            value = value_read as i64;
+        } else if marker == m::INT_16 {
+            let value_read = try!(self.reader.read_i16::<BigEndian>());
+            value = value_read as i64;
+        } else if marker == m::INT_32 {
+            let value_read = try!(self.reader.read_i32::<BigEndian>());
+            value = value_read as i64;
+        } else {
+            let value_read = try!(self.reader.read_i64::<BigEndian>());
+            value = value_read as i64;
+        }
+
+        Ok(value)
+    }
+
+    fn parse_float(&mut self) -> Result<f64, DecoderError> {
+        let marker = try!(self.peek());
+
+        if marker != m::FLOAT {
+            return wrong_marker!("FLOAT".to_owned(), marker)
+        }
+
+        self.reader.read_f64::<BigEndian>().map_err(From::from)
+    }
+
+    fn parse_string(&mut self) -> Result<String, DecoderError> {
+        let marker = try!(self.peek());
+
         let size;
         if is_tiny_string(marker) {
             size = (marker & 0b0000_1111) as usize;
@@ -217,8 +288,23 @@ impl<'a, R: Read> PackstreamDecoder<'a, R> {
     }
 }
 
-impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
+impl<'a, R: Read> Deserializer for PackstreamDecoder<'a, R> {
     type Error = DecoderError;
+
+    fn visit<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: Visitor
+    {
+        visitor.visit(self)
+    }
+
+    fn read_bool(&mut self) -> Result<bool, Self::Error> {
+        let marker = try!(self.reader.read_u8());
+        match marker {
+            m::TRUE => Ok(true),
+            m::FALSE => Ok(false),
+            _ => wrong_marker!("BOOLEAN".to_owned(), marker),
+        }
+    }
 
     // Primitive types:
     fn read_nil(&mut self) -> Result<(), Self::Error> {
@@ -374,15 +460,6 @@ impl<'a, R: Read> Decoder for PackstreamDecoder<'a, R> {
         }
 
         Ok(value)
-    }
-
-    fn read_bool(&mut self) -> Result<bool, Self::Error> {
-        let marker = try!(self.reader.read_u8());
-        match marker {
-            m::TRUE => Ok(true),
-            m::FALSE => Ok(false),
-            _ => wrong_marker!("BOOLEAN".to_owned(), marker),
-        }
     }
 
     fn read_f64(&mut self) -> Result<f64, Self::Error> {
