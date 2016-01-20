@@ -204,9 +204,31 @@ impl<'a, R: Read> PackstreamDecoder<'a, R> {
         where V: Visitor,
     {
         match try!(self.peek()) {
-            0x00...0x7F | 0xC8 | 0xC9 | 0xCA | 0xCB => {
+            0xC0 =>
+                visitor.visit_unit(),
+            0xC3 =>
+                visitor.visit_bool(true),
+            0xC2 =>
+                visitor.visit_bool(false),
+            0x00...0x7F | 0xC8 =>
+                self.parse_int().and_then(|v| visitor.visit_i8(v as i8)),
+            0xC9 =>
+                self.parse_int().and_then(|v| visitor.visit_i16(v as i16)),
+            0xCA =>
+                self.parse_int().and_then(|v| visitor.visit_i32(v as i32)),
+            0xCB =>
+                self.parse_int().and_then(|v| visitor.visit_i64(v)),
+            0xC1 =>
+                self.parse_float().and_then(|v| visitor.visit_f64(v)),
+            0x80...0x8F | 0xD0 | 0xD1 | 0xD2 =>
+                self.parse_string().and_then(|v| visitor.visit(v)),
+            0x90...0x9F | 0xD4 | 0xD5 | 0xD6 =>
+                visitor.visit_seq(SeqVisitor::new(self)),
+            0xA0...0xAF | 0xD8 | 0xD9 | 0xDA =>
+                visitor.visit_map(MapVisitor::new(self)),
+            0xB0...0xBF | 0xDC | 0xDD =>
 
-            }
+            _ => unimplemented!()
         }
     }
 
