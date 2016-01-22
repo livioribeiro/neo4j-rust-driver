@@ -25,7 +25,7 @@ impl<'a, R: Read + 'a> de::SeqVisitor for SeqVisitor<'a, R> {
     fn visit<T>(&mut self) -> Result<Option<T>, Self::Error>
         where T: de::Deserialize
     {
-        if self.current > self.size { return Ok(None) }
+        if self.current >= self.size { return Ok(None) }
         self.current += 1;
 
         let value = try!(de::Deserialize::deserialize(self.de));
@@ -33,7 +33,7 @@ impl<'a, R: Read + 'a> de::SeqVisitor for SeqVisitor<'a, R> {
     }
 
      fn end(&mut self) -> Result<(), Self::Error> {
-        if self.current <= self.size {
+        if self.current < self.size {
             return Err(DecoderError::UnexpectedEOF)
         }
 
@@ -63,7 +63,7 @@ impl<'a, R: Read + 'a> de::MapVisitor for MapVisitor<'a, R> {
     fn visit_key<K>(&mut self) -> Result<Option<K>, Self::Error>
         where K: de::Deserialize
     {
-        if self.current > self.size { return Ok(None) }
+        if self.current >= self.size { return Ok(None) }
 
         let value = try!(de::Deserialize::deserialize(self.de));
         Ok(Some(value))
@@ -72,7 +72,7 @@ impl<'a, R: Read + 'a> de::MapVisitor for MapVisitor<'a, R> {
     fn visit_value<V>(&mut self) -> Result<V, Self::Error>
         where V: de::Deserialize
     {
-        if self.current > self.size { return Err(DecoderError::UnexpectedEOF) }
+        if self.current >= self.size { return Err(DecoderError::UnexpectedEOF) }
         self.current += 1;
 
         let value = try!(de::Deserialize::deserialize(self.de));
@@ -80,7 +80,7 @@ impl<'a, R: Read + 'a> de::MapVisitor for MapVisitor<'a, R> {
     }
 
     fn end(&mut self) -> Result<(), Self::Error> {
-        if self.current <= self.size {
+        if self.current < self.size {
             return Err(DecoderError::UnexpectedEOF)
         }
 

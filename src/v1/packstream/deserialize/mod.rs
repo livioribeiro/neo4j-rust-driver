@@ -3,7 +3,8 @@ use std::error::Error;
 use std::io::prelude::*;
 
 // use rustc_serialize::{Decodable, Decoder};
-use serde::de::{Deserializer, Deserialize, Visitor};
+use serde::de::{self, Deserializer, Deserialize, Visitor};
+use serde::de::Error as SerdeError;
 use byteorder::{ReadBytesExt, BigEndian};
 
 mod visitor;
@@ -162,10 +163,10 @@ impl<R: Read> PackstreamDecoder<R> {
                 visitor.visit_bool(true),
             0xC2 =>
                 visitor.visit_bool(false),
-            0x00...0x7F | 0xC8 =>
-                self.parse_int().and_then(|v| visitor.visit_i8(v as i8)),
+            0x00...0x7F | 0xF0...0xFF | 0xC8 =>
+                self.parse_int().and_then(|v| if v > 0 {visitor.visit_u8(v as u8)} else {visitor.visit_i8(v as i8)}),
             0xC9 =>
-                self.parse_int().and_then(|v| visitor.visit_i16(v as i16)),
+                self.parse_int().and_then(|v| if v > 0 {visitor.visit_u16(v as u16)} else {visitor.visit_i16(v as i16)}),
             0xCA =>
                 self.parse_int().and_then(|v| visitor.visit_i32(v as i32)),
             0xCB =>
@@ -230,7 +231,8 @@ impl<R: Read> PackstreamDecoder<R> {
         let marker = try!(self.peek());
 
         if !is_int64_or_lesser(marker) {
-            return wrong_marker!("INTEGER".to_owned(), marker)
+            // return wrong_marker!("INTEGER".to_owned(), marker)
+            return Err(DecoderError::UnexpectedType("Integer"))
         }
 
         let value: i64;
@@ -311,6 +313,62 @@ impl<R: Read> Deserializer for PackstreamDecoder<R> {
         where V: Visitor
     {
         self.parse_value(visitor)
+    }
+
+    // fn visit_bool<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+    //     where V: Visitor,
+    // {
+    //     match try!(self.peek()) {
+    //         0xC3 => visitor.visit_bool(true),
+    //         0xC2 => visitor.visit_bool(false),
+    //         _ => Err(DecoderError::type_mismatch(de::Type::Bool))
+    //     }
+    // }
+
+    fn visit_usize<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: Visitor,
+    {
+        let value = try!(self.parse_int());
+        if value < 0 { return Err(DecoderError::type_mismatch(de::Type::Usize)) }
+        visitor.visit_usize(value as usize)
+    }
+
+    fn visit_u8<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: Visitor,
+    {
+        let value = try!(self.parse_int());
+        if value < 0 || value > ::std::u8::MAX as i64 {
+            return Err(DecoderError::type_mismatch(de::Type::U8))
+        }
+        visitor.visit_u8(value as u8)
+    }
+
+    fn visit_u16<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: Visitor,
+    {
+        let value = try!(self.parse_int());
+        if value < 0 || value > ::std::u16::MAX as i64 {
+            return Err(DecoderError::type_mismatch(de::Type::U16))
+        }
+        visitor.visit_u16(value as u16)
+    }
+
+    fn visit_u32<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: Visitor,
+    {
+        let value = try!(self.parse_int());
+        if value < 0 || value > ::std::u32::MAX as i64 {
+            return Err(DecoderError::type_mismatch(de::Type::U32))
+        }
+        visitor.visit_u32(value as u32)
+    }
+
+    fn visit_u64<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: Visitor,
+    {
+        let value = try!(self.parse_int());
+        if value < 0 { return Err(DecoderError::type_mismatch(de::Type::U64)) }
+        visitor.visit_u64(value as u64)
     }
 
     fn visit_option<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
@@ -811,21 +869,21 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedInput(\"+INT_64\", \"-INTEGER\")")]
+    #[should_panic(expected = "UnexpectedType(\"u64\")")]
     fn negative_int_into_u64_should_panic() {
         let mut input = Cursor::new(vec![0xFF]);
         let _: u64 = decode(&mut input).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedMarker(\"INT_32\", \"INT_64\")")]
+    #[should_panic(expected = "UnexpectedType(\"f64\")")]
     fn positive_int64_into_smaller_should_fail() {
         let mut input = Cursor::new(vec![m::INT_64, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
-        let _: u32 = decode(&mut input).unwrap();
+        let value: i32 = decode(&mut input).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedMarker(\"INT_32\", \"INT_64\")")]
+    #[should_panic(expected = "UnexpectedType(\"i64\")")]
     fn negative_int64_into_smaller_should_fail() {
         let mut input = Cursor::new(vec![m::INT_64, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
         let _: i32 = decode(&mut input).unwrap();
@@ -861,21 +919,21 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedInput(\"+INT_32\", \"-INTEGER\")")]
+    #[should_panic(expected = "UnexpectedType(\"i8\")")]
     fn negative_int_into_u32_should_panic() {
         let mut input = Cursor::new(vec![0xFF]);
         let _: u32 = decode(&mut input).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedMarker(\"INT_16\", \"INT_32\")")]
+    #[should_panic(expected = "UnexpectedType(\"u32\")")]
     fn positive_int32_into_smaller_should_fail() {
         let mut input = Cursor::new(vec![m::INT_32, 0x7F, 0xFF, 0xFF, 0xFF]);
         let _: u16 = decode(&mut input).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedMarker(\"INT_16\", \"INT_32\")")]
+    #[should_panic(expected = "UnexpectedType(\"i32\")")]
     fn negative_int32_into_smaller_should_fail() {
         let mut input = Cursor::new(vec![m::INT_32, 0x80, 0x00, 0x00, 0x00]);
         let _: i16 = decode(&mut input).unwrap();
@@ -911,21 +969,21 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedInput(\"+INT_16\", \"-INTEGER\")")]
+    #[should_panic(expected = "UnexpectedType(\"u16\")")]
     fn negative_int_into_u16_should_panic() {
         let mut input = Cursor::new(vec![0xFF]);
         let _: u16 = decode(&mut input).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedMarker(\"INT_8\", \"INT_16\")")]
+    #[should_panic(expected = "UnexpectedType(\"u8\")")]
     fn positive_int16_into_smaller_should_fail() {
         let mut input = Cursor::new(vec![m::INT_16, 0x7F, 0xFF]);
         let _: u8 = decode(&mut input).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedMarker(\"INT_8\", \"INT_16\")")]
+    #[should_panic(expected = "UnexpectedType(\"i16\")")]
     fn negative_int16_into_smaller_should_fail() {
         let mut input = Cursor::new(vec![m::INT_16, 0x80, 0x00]);
         let _: i8 = decode(&mut input).unwrap();
@@ -951,14 +1009,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedInput(\"+INT_8\", \"-INTEGER\")")]
+    #[should_panic(expected = "UnexpectedType(\"u8\")")]
     fn negative_int_into_u8_should_panic() {
         let mut input = Cursor::new(vec![m::INT_8, 0x80]);
         let _: u8 = decode(&mut input).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedInput(\"+INT_8\", \"-INTEGER\")")]
+    #[should_panic(expected = "UnexpectedType(\"u8\")")]
     fn negative_small_int_into_u8_should_panic() {
         let mut input = Cursor::new(vec![0xF0]);
         let _: u8 = decode(&mut input).unwrap();
