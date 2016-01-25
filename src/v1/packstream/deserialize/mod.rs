@@ -53,19 +53,19 @@ fn is_int64_or_lesser(b: u8) -> bool {
     b == m::INT_64 || is_int32_or_lesser(b)
 }
 
-fn is_string(b: u8) -> bool {
-    is_tiny_string(b) || b == m::STRING_8
-        || b == m::STRING_16 || b == m::STRING_32
-}
-
-fn is_map(b: u8) -> bool {
-    is_tiny_map(b) || b == m::MAP_8
-        || b == m::MAP_16 || b == m::MAP_32
-}
-
-fn is_structure(b: u8) -> bool {
-    is_tiny_structure(b) || b == m::STRUCT_8 || b == m::STRUCT_16
-}
+// fn is_string(b: u8) -> bool {
+//     is_tiny_string(b) || b == m::STRING_8
+//         || b == m::STRING_16 || b == m::STRING_32
+// }
+//
+// fn is_map(b: u8) -> bool {
+//     is_tiny_map(b) || b == m::MAP_8
+//         || b == m::MAP_16 || b == m::MAP_32
+// }
+//
+// fn is_structure(b: u8) -> bool {
+//     is_tiny_structure(b) || b == m::STRUCT_8 || b == m::STRUCT_16
+// }
 
 pub fn which(byte: u8) -> Option<&'static str> {
     match byte {
@@ -114,14 +114,8 @@ macro_rules! wrong_input {
     }
 }
 
-enum StructKind {
-    Regular,
-    Structure,
-}
-
 pub struct PackstreamDecoder<R: Read> {
     reader: R,
-    struct_stack: Vec<StructKind>,
     byte: Option<u8>,
 }
 
@@ -129,7 +123,6 @@ impl<R: Read> PackstreamDecoder<R> {
     pub fn new(reader: R) -> Self {
         PackstreamDecoder {
             reader: reader,
-            struct_stack: Vec::new(),
             byte: None,
         }
     }
@@ -168,9 +161,9 @@ impl<R: Read> PackstreamDecoder<R> {
             0xC9 =>
                 self.parse_int().and_then(|v| if v > 0 {visitor.visit_u16(v as u16)} else {visitor.visit_i16(v as i16)}),
             0xCA =>
-                self.parse_int().and_then(|v| visitor.visit_i32(v as i32)),
+                self.parse_int().and_then(|v| if v > 0 {visitor.visit_u32(v as u32)} else {visitor.visit_i32(v as i32)}),
             0xCB =>
-                self.parse_int().and_then(|v| visitor.visit_i64(v)),
+                self.parse_int().and_then(|v| if v > 0 {visitor.visit_u64(v as u64)} else {visitor.visit_i64(v)}),
             0xC1 =>
                 self.parse_float().and_then(|v| visitor.visit_f64(v)),
             0x80...0x8F | 0xD0 | 0xD1 | 0xD2 =>
@@ -180,7 +173,7 @@ impl<R: Read> PackstreamDecoder<R> {
                 self.bump();
 
                 let size = match marker {
-                    0x90...0x9F => (marker | 0b0000_1111) as usize,
+                    0x90...0x9F => (marker & 0b0000_1111) as usize,
                     0xD4 => try!(self.reader.read_u8()) as usize,
                     0xD5 => try!(self.reader.read_u16::<BigEndian>()) as usize,
                     0xD6 => try!(self.reader.read_u32::<BigEndian>()) as usize,
@@ -195,7 +188,7 @@ impl<R: Read> PackstreamDecoder<R> {
                 self.bump();
 
                 let size = match marker {
-                    0xA0...0xAF => (marker | 0b0000_1111) as usize,
+                    0xA0...0xAF => (marker & 0b0000_1111) as usize,
                     0xD8 => try!(self.reader.read_u8()) as usize,
                     0xD9 => try!(self.reader.read_u16::<BigEndian>()) as usize,
                     0xDA => try!(self.reader.read_u32::<BigEndian>()) as usize,
@@ -210,7 +203,7 @@ impl<R: Read> PackstreamDecoder<R> {
                 self.bump();
 
                 let size = match marker {
-                    0xB0...0xBF => (marker | 0b0000_1111) as usize,
+                    0xB0...0xBF => (marker & 0b0000_1111) as usize,
                     0xDC => try!(self.reader.read_u8()) as usize,
                     0xDD => try!(self.reader.read_u16::<BigEndian>()) as usize,
                     _ => unreachable!()
@@ -252,6 +245,8 @@ impl<R: Read> PackstreamDecoder<R> {
             value = value_read as i64;
         }
 
+        self.bump();
+
         Ok(value)
     }
 
@@ -261,6 +256,8 @@ impl<R: Read> PackstreamDecoder<R> {
         if marker != m::FLOAT {
             return wrong_marker!("FLOAT".to_owned(), marker)
         }
+
+        self.bump();
 
         self.reader.read_f64::<BigEndian>().map_err(From::from)
     }
@@ -302,6 +299,8 @@ impl<R: Read> PackstreamDecoder<R> {
             }
         }
 
+        self.bump();
+
         String::from_utf8(store).map_err(From::from)
     }
 }
@@ -315,21 +314,11 @@ impl<R: Read> Deserializer for PackstreamDecoder<R> {
         self.parse_value(visitor)
     }
 
-    // fn visit_bool<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
-    //     where V: Visitor,
-    // {
-    //     match try!(self.peek()) {
-    //         0xC3 => visitor.visit_bool(true),
-    //         0xC2 => visitor.visit_bool(false),
-    //         _ => Err(DecoderError::type_mismatch(de::Type::Bool))
-    //     }
-    // }
-
     fn visit_usize<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
         where V: Visitor,
     {
         let value = try!(self.parse_int());
-        if value < 0 { return Err(DecoderError::type_mismatch(de::Type::Usize)) }
+        if value < 0 { return Err(DecoderError::type_mismatch(de::Type::Isize)) }
         visitor.visit_usize(value as usize)
     }
 
@@ -337,8 +326,24 @@ impl<R: Read> Deserializer for PackstreamDecoder<R> {
         where V: Visitor,
     {
         let value = try!(self.parse_int());
-        if value < 0 || value > ::std::u8::MAX as i64 {
-            return Err(DecoderError::type_mismatch(de::Type::U8))
+        if value < 0 {
+            if value < ::std::i32::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I64))
+            } else if value < ::std::i16::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I32))
+            } else if value < ::std::i8::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I16))
+            } else {
+                return Err(DecoderError::type_mismatch(de::Type::I8))
+            }
+        } else {
+            if value > ::std::u32::MAX as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::U64))
+            } else if value > ::std::u16::MAX as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::U32))
+            } else if value > ::std::u8::MAX as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::U16))
+            }
         }
         visitor.visit_u8(value as u8)
     }
@@ -347,8 +352,22 @@ impl<R: Read> Deserializer for PackstreamDecoder<R> {
         where V: Visitor,
     {
         let value = try!(self.parse_int());
-        if value < 0 || value > ::std::u16::MAX as i64 {
-            return Err(DecoderError::type_mismatch(de::Type::U16))
+        if value < 0 {
+            if value < ::std::i32::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I64))
+            } else if value < ::std::i16::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I32))
+            } else if value < ::std::i8::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I16))
+            } else {
+                return Err(DecoderError::type_mismatch(de::Type::I8))
+            }
+        } else {
+            if value > ::std::u32::MAX as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::U64))
+            } else if value > ::std::u16::MAX as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::U32))
+            }
         }
         visitor.visit_u16(value as u16)
     }
@@ -357,8 +376,20 @@ impl<R: Read> Deserializer for PackstreamDecoder<R> {
         where V: Visitor,
     {
         let value = try!(self.parse_int());
-        if value < 0 || value > ::std::u32::MAX as i64 {
-            return Err(DecoderError::type_mismatch(de::Type::U32))
+        if value < 0 {
+            if value < ::std::i32::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I64))
+            } else if value < ::std::i16::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I32))
+            } else if value < ::std::i8::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I16))
+            } else {
+                return Err(DecoderError::type_mismatch(de::Type::I8))
+            }
+        } else {
+            if value > ::std::u32::MAX as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::U64))
+            }
         }
         visitor.visit_u32(value as u32)
     }
@@ -367,7 +398,17 @@ impl<R: Read> Deserializer for PackstreamDecoder<R> {
         where V: Visitor,
     {
         let value = try!(self.parse_int());
-        if value < 0 { return Err(DecoderError::type_mismatch(de::Type::U64)) }
+        if value < 0 {
+            if value < ::std::i32::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I64))
+            } else if value < ::std::i16::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I32))
+            } else if value < ::std::i8::MIN as i64 {
+                return Err(DecoderError::type_mismatch(de::Type::I16))
+            } else {
+                return Err(DecoderError::type_mismatch(de::Type::I8))
+            }
+        }
         visitor.visit_u64(value as u64)
     }
 
@@ -379,435 +420,6 @@ impl<R: Read> Deserializer for PackstreamDecoder<R> {
             _ => visitor.visit_some(self),
         }
     }
-
-    // fn visit_enum<V>(&mut self,
-    //                  _enum: &'static str,
-    //                  _variants: &'static [&'static str],
-    //                  visitor: V) -> Result<V::Value, Self::Error>
-    //     where V: EnumVisitor,
-    // {
-    //     visitor.visit(self)
-    // }
-
-    // fn read_nil(&mut self) -> Result<(), Self::Error> {
-    //     let marker = try!(self.reader.read_u8());
-    //     if marker != m::NULL {
-    //         wrong_marker!("NULL".to_owned(), marker)
-    //     } else {
-    //         Ok(())
-    //     }
-    // }
-    //
-    // #[cfg(target_pointer_width = "32")]
-    // fn read_usize(&mut self) -> Result<usize, Self::Error> {
-    //     self.read_u32().map(|v| v as usize)
-    // }
-    //
-    // #[cfg(target_pointer_width = "64")]
-    // fn read_usize(&mut self) -> Result<usize, Self::Error> {
-    //     self.read_u64().map(|v| v as usize)
-    // }
-    //
-    // fn read_u64(&mut self) -> Result<u64, Self::Error> {
-    //     let value = try!(self.read_i64());
-    //
-    //     if value < 0 {
-    //         return wrong_input!("+INT_64".to_owned(), "-INTEGER".to_owned())
-    //     }
-    //
-    //     Ok(value as u64)
-    // }
-    //
-    // fn read_u32(&mut self) -> Result<u32, Self::Error> {
-    //     let value = try!(self.read_i32());
-    //
-    //     if value < 0 {
-    //         return wrong_input!("+INT_32".to_owned(), "-INTEGER".to_owned())
-    //     }
-    //
-    //     Ok(value as u32)
-    // }
-    //
-    // fn read_u16(&mut self) -> Result<u16, Self::Error> {
-    //     let value = try!(self.read_i16());
-    //
-    //     if value < 0 {
-    //         return wrong_input!("+INT_16".to_owned(), "-INTEGER".to_owned())
-    //     }
-    //
-    //     Ok(value as u16)
-    // }
-    //
-    // fn read_u8(&mut self) -> Result<u8, Self::Error> {
-    //     let value = try!(self.read_i8());
-    //
-    //     if value < 0 {
-    //         return wrong_input!("+INT_8".to_owned(), "-INTEGER".to_owned())
-    //     }
-    //
-    //     Ok(value as u8)
-    // }
-    //
-    // #[cfg(target_pointer_width = "32")]
-    // fn read_isize(&mut self) -> Result<isize, Self::Error> {
-    //     self.read_i32().map(|v| v as isize)
-    // }
-    //
-    // #[cfg(target_pointer_width = "64")]
-    // fn read_isize(&mut self) -> Result<isize, Self::Error> {
-    //     self.read_i64().map(|v| v as isize)
-    // }
-    //
-    // fn read_i64(&mut self) -> Result<i64, Self::Error> {
-    //     let marker = try!(self.reader.read_u8());
-    //     if !is_int64_or_lesser(marker) {
-    //         return wrong_marker!("INT_64".to_owned(), marker)
-    //     }
-    //
-    //     let value: i64;
-    //     if is_tiny_int(marker) {
-    //         value = read_tiny_int(marker) as i64;
-    //     } else if marker == m::INT_8 {
-    //         let value_read = try!(self.reader.read_i8());
-    //         value = value_read as i64;
-    //     } else if marker == m::INT_16 {
-    //         let value_read = try!(self.reader.read_i16::<BigEndian>());
-    //         value = value_read as i64;
-    //     } else if marker == m::INT_32 {
-    //         let value_read = try!(self.reader.read_i32::<BigEndian>());
-    //         value = value_read as i64;
-    //     } else {
-    //         let value_read = try!(self.reader.read_i64::<BigEndian>());
-    //         value = value_read as i64;
-    //     }
-    //
-    //     Ok(value)
-    // }
-    //
-    // fn read_i32(&mut self) -> Result<i32, Self::Error> {
-    //     let marker = try!(self.reader.read_u8());
-    //     if !is_int32_or_lesser(marker) {
-    //         return wrong_marker!("INT_32".to_owned(), marker)
-    //     }
-    //
-    //     let value: i32;
-    //     if is_tiny_int(marker) {
-    //         value = read_tiny_int(marker) as i32;
-    //     } else if marker == m::INT_8 {
-    //         let value_read = try!(self.reader.read_i8());
-    //         value = value_read as i32;
-    //     } else if marker == m::INT_16 {
-    //         let value_read = try!(self.reader.read_i16::<BigEndian>());
-    //         value = value_read as i32;
-    //     } else {
-    //         let value_read = try!(self.reader.read_i32::<BigEndian>());
-    //         value = value_read as i32;
-    //     }
-    //
-    //     Ok(value)
-    // }
-    //
-    // fn read_i16(&mut self) -> Result<i16, Self::Error> {
-    //     let marker = try!(self.reader.read_u8());
-    //     if !is_int16_or_lesser(marker) {
-    //         return wrong_marker!("INT_16".to_owned(), marker)
-    //     }
-    //
-    //     let value: i16;
-    //     if is_tiny_int(marker) {
-    //         value = read_tiny_int(marker) as i16;
-    //     } else if marker == m::INT_8 {
-    //         let value_read = try!(self.reader.read_i8());
-    //         value = value_read as i16
-    //     } else {
-    //         let value_read = try!(self.reader.read_i16::<BigEndian>());
-    //         value = value_read as i16
-    //     }
-    //
-    //     Ok(value)
-    // }
-    //
-    // fn read_i8(&mut self) -> Result<i8, Self::Error> {
-    //     let marker = try!(self.reader.read_u8());
-    //     if !is_int8_or_lesser(marker) {
-    //         return wrong_marker!("INT_8".to_owned(), marker)
-    //     }
-    //
-    //     let value: i8;
-    //     if is_tiny_int(marker) {
-    //         value = read_tiny_int(marker);
-    //     } else  {
-    //         let value_read = try!(self.reader.read_i8());
-    //         value = value_read
-    //     }
-    //
-    //     Ok(value)
-    // }
-    //
-    // fn read_f64(&mut self) -> Result<f64, Self::Error> {
-    //     let marker = try!(self.reader.read_u8());
-    //     if marker != m::FLOAT {
-    //         return wrong_marker!("FLOAT".to_owned(), marker)
-    //     }
-    //
-    //     self.reader.read_f64::<BigEndian>().map_err(From::from)
-    // }
-    //
-    // fn read_f32(&mut self) -> Result<f32, Self::Error> {
-    //     self.read_f64().map(|v| v as f32)
-    // }
-    //
-    // fn read_char(&mut self) -> Result<char, Self::Error> {
-    //     let value = try!(self.read_str());
-    //
-    //     if value.len() > 1 { return wrong_input!("CHAR".to_owned(), "STRING".to_owned()) }
-    //
-    //     value.chars().nth(0).ok_or(
-    //         DecErr::UnexpectedInput("CHAR".to_owned(), "Empty String".to_owned())
-    //     )
-    // }
-    //
-    // fn read_str(&mut self) -> Result<String, Self::Error> {
-    //     let marker = try!(self.reader.read_u8());
-    //
-    //     if !is_string(marker) {
-    //         return wrong_marker!("STRING".to_owned(), marker)
-    //     }
-    //
-    //     self.read_string_data(marker)
-    // }
-    //
-    // // Compound types:
-    // fn read_enum<T, F>(&mut self, _: &str, f: F) -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     f(self)
-    // }
-    //
-    // fn read_enum_variant<T, F>(&mut self, names: &[&str], mut f: F)
-    //                            -> Result<T, Self::Error>
-    //     where F: FnMut(&mut Self, usize) -> Result<T, Self::Error> {
-    //
-    //     let marker = try!(self.reader.read_u8());
-    //     let name: String;
-    //     if is_string(marker) {
-    //         name = try!(self.read_string_data(marker));
-    //     } else if is_tiny_map(marker) {
-    //         let size = 1;
-    //         if size != marker & 0b0000_1111 {
-    //             return wrong_input!("Map(1)".to_owned(), format!("Map({})", marker & 0b0000_1111))
-    //         }
-    //         name = try!(self.read_str());
-    //         try!(self.read_seq(|_, _| Ok(())));
-    //     } else {
-    //         return wrong_marker!("ENUM_VARIANT".to_owned(), marker)
-    //     }
-    //
-    //     let idx = match names.iter().position(|n| *n == name) {
-    //         Some(idx) => idx,
-    //         None => return Err(DecErr::UnknownVariant(name))
-    //     };
-    //
-    //     f(self, idx)
-    // }
-    //
-    // fn read_enum_variant_arg<T, F>(&mut self, _: usize, f: F)
-    //                                -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     f(self)
-    // }
-    //
-    // fn read_enum_struct_variant<T, F>(&mut self, names: &[&str], f: F)
-    //                                   -> Result<T, Self::Error>
-    //     where F: FnMut(&mut Self, usize) -> Result<T, Self::Error> {
-    //
-    //     self.read_enum_variant(names, f)
-    // }
-    //
-    // fn read_enum_struct_variant_field<T, F>(&mut self,
-    //                                         _: &str,
-    //                                         f_idx: usize,
-    //                                         f: F)
-    //                                         -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     self.read_enum_variant_arg(f_idx, f)
-    // }
-    //
-    // fn read_struct<T, F>(&mut self, s_name: &str, len: usize, f: F)
-    //                      -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     let marker = try!(self.reader.read_u8());
-    //
-    //     let struct_kind: StructKind;
-    //     let size: usize;
-    //     if is_map(marker) {
-    //         if is_tiny_map(marker) {
-    //             size = (marker & 0b0000_1111) as usize;
-    //         } else if marker == m::MAP_8 {
-    //             size = try!(self.reader.read_u8()) as usize;
-    //         } else if marker == m::MAP_16 {
-    //             size = try!(self.reader.read_u16::<BigEndian>()) as usize;
-    //         } else {
-    //             size = try!(self.reader.read_u32::<BigEndian>()) as usize;
-    //         }
-    //
-    //         struct_kind = StructKind::Regular;
-    //     } else if is_structure(marker) {
-    //         if is_tiny_structure(marker) {
-    //             size = (marker & 0b0000_1111) as usize + 1;
-    //         } else if marker == m::STRUCT_8 {
-    //             size = try!(self.reader.read_u8()) as usize + 1;
-    //         } else {
-    //             size = try!(self.reader.read_u16::<BigEndian>()) as usize + 1;
-    //         }
-    //
-    //         struct_kind = StructKind::Structure;
-    //     } else {
-    //         return wrong_marker!("MAP or STRUCTURE".to_owned(), marker)
-    //     }
-    //
-    //     if size != len {
-    //         return wrong_input!(format!("{} ({} fields)", s_name, len), format!("? ({} fields)", size))
-    //     }
-    //
-    //     self.struct_stack.push(struct_kind);
-    //     let result = f(self);
-    //     self.struct_stack.pop();
-    //     result
-    // }
-    //
-    // fn read_struct_field<T, F>(&mut self,
-    //                            f_name: &str,
-    //                            _: usize,
-    //                            f: F)
-    //                            -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     match self.struct_stack.last() {
-    //         Some(&StructKind::Regular) => {
-    //             let prop = try!(self.read_str());
-    //             if prop != f_name {
-    //                 return Err(DecErr::WrongField(prop, f_name.to_owned()))
-    //             }
-    //         }
-    //         Some(&StructKind::Structure) => {},
-    //         _ => {}
-    //     }
-    //
-    //     f(self)
-    // }
-    //
-    // fn read_tuple<T, F>(&mut self, len: usize, f: F) -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     self.read_seq(move |d, l| {
-    //         if l == len {
-    //             f(d)
-    //         } else {
-    //             wrong_input!(format!("Tuple{}", len), format!("Tuple{}", l))
-    //         }
-    //     })
-    // }
-    //
-    // fn read_tuple_arg<T, F>(&mut self, a_idx: usize, f: F)
-    //                         -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     self.read_seq_elt(a_idx, f)
-    // }
-    //
-    // fn read_tuple_struct<T, F>(&mut self, _: &str, len: usize, f: F)
-    //                            -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     self.read_tuple(len, f)
-    // }
-    //
-    // fn read_tuple_struct_arg<T, F>(&mut self, a_idx: usize, f: F)
-    //                                -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     self.read_tuple_arg(a_idx, f)
-    // }
-    //
-    // // Specialized types:
-    // fn read_option<T, F>(&mut self, mut f: F) -> Result<T, Self::Error>
-    //     where F: FnMut(&mut Self, bool) -> Result<T, Self::Error> {
-    //
-    //     let marker = try!(self.reader.read_u8());
-    //     if marker == m::NULL { f(self, false) }
-    //     else { f(self, true) }
-    // }
-    //
-    // fn read_seq<T, F>(&mut self, f: F) -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self, usize) -> Result<T, Self::Error> {
-    //
-    //     let marker = try!(self.reader.read_u8());
-    //
-    //     let size: usize;
-    //     if is_tiny_list(marker) {
-    //         size = (marker & 0b0000_1111) as usize;
-    //     } else if marker == m::LIST_8 {
-    //         size = try!(self.reader.read_u8()) as usize;
-    //     } else if marker == m::LIST_16 {
-    //         size = try!(self.reader.read_u16::<BigEndian>()) as usize;
-    //     } else if marker == m::LIST_32 {
-    //         size = try!(self.reader.read_u32::<BigEndian>()) as usize;
-    //     } else {
-    //         return wrong_marker!("LIST".to_owned(), marker)
-    //     }
-    //
-    //     f(self, size)
-    // }
-    //
-    // fn read_seq_elt<T, F>(&mut self, _: usize, f: F) -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     f(self)
-    // }
-    //
-    // fn read_map<T, F>(&mut self, f: F) -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self, usize) -> Result<T, Self::Error> {
-    //
-    //     let marker = try!(self.reader.read_u8());
-    //
-    //     let size: usize;
-    //     if is_tiny_map(marker) {
-    //         size = (marker & 0b0000_1111) as usize;
-    //     } else if marker == m::MAP_8 {
-    //         size = try!(self.reader.read_u8()) as usize;
-    //     } else if marker == m::MAP_16 {
-    //         size = try!(self.reader.read_u16::<BigEndian>()) as usize;
-    //     } else if marker == m::MAP_32 {
-    //         size = try!(self.reader.read_u32::<BigEndian>()) as usize;
-    //     } else {
-    //         return wrong_marker!("MAP".to_owned(), marker)
-    //     }
-    //
-    //     f(self, size)
-    // }
-    //
-    // fn read_map_elt_key<T, F>(&mut self, _: usize, f: F)
-    //                           -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     f(self)
-    // }
-    //
-    // fn read_map_elt_val<T, F>(&mut self, _: usize, f: F)
-    //                           -> Result<T, Self::Error>
-    //     where F: FnOnce(&mut Self) -> Result<T, Self::Error> {
-    //
-    //     f(self)
-    // }
-    //
-    // // Failure
-    // fn error(&mut self, err: &str) -> Self::Error {
-    //     DecErr::ApplicationError(err.to_owned())
-    // }
 }
 
 #[cfg(test)]
@@ -869,17 +481,17 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedType(\"u64\")")]
+    #[should_panic(expected = "UnexpectedType(\"i8\")")]
     fn negative_int_into_u64_should_panic() {
         let mut input = Cursor::new(vec![0xFF]);
         let _: u64 = decode(&mut input).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedType(\"f64\")")]
+    #[should_panic(expected = "UnexpectedType(\"u64\")")]
     fn positive_int64_into_smaller_should_fail() {
         let mut input = Cursor::new(vec![m::INT_64, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
-        let value: i32 = decode(&mut input).unwrap();
+        let _: u32 = decode(&mut input).unwrap();
     }
 
     #[test]
@@ -969,14 +581,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedType(\"u16\")")]
+    #[should_panic(expected = "UnexpectedType(\"i8\")")]
     fn negative_int_into_u16_should_panic() {
         let mut input = Cursor::new(vec![0xFF]);
         let _: u16 = decode(&mut input).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedType(\"u8\")")]
+    #[should_panic(expected = "UnexpectedType(\"u16\")")]
     fn positive_int16_into_smaller_should_fail() {
         let mut input = Cursor::new(vec![m::INT_16, 0x7F, 0xFF]);
         let _: u8 = decode(&mut input).unwrap();
@@ -1009,19 +621,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedType(\"u8\")")]
+    #[should_panic(expected = "UnexpectedType(\"i8\")")]
     fn negative_int_into_u8_should_panic() {
         let mut input = Cursor::new(vec![m::INT_8, 0x80]);
         let _: u8 = decode(&mut input).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "UnexpectedType(\"u8\")")]
+    #[should_panic(expected = "UnexpectedType(\"i8\")")]
     fn negative_small_int_into_u8_should_panic() {
         let mut input = Cursor::new(vec![0xF0]);
         let _: u8 = decode(&mut input).unwrap();
     }
 
+    // Float
     #[test]
     fn deserialize_float_positive() {
         let mut input = Cursor::new(vec![m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]);
@@ -1036,6 +649,7 @@ mod tests {
         assert_eq!(-1.1, result);
     }
 
+    // String
     #[test]
     fn deserialize_string32() {
         let size = 70_000;
@@ -1104,6 +718,7 @@ mod tests {
         }
     }
 
+    // List
     #[test]
     fn deserialize_list32() {
         let size = 70_000;
@@ -1254,6 +869,7 @@ mod tests {
         assert_eq!(expected, result);
     }
 
+    // Map
     #[test]
     fn deserialize_map32() {
         let size = 70_000;

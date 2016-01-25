@@ -82,7 +82,7 @@ impl de::Error for DecoderError {
     }
 
     fn end_of_stream() -> Self {
-        DecoderError::UnexpectedEOF
+        DecoderError::UnexpectedType("EOF")
     }
 
     fn unknown_field(field: &str) -> Self {

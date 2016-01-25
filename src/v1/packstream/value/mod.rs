@@ -307,8 +307,6 @@ mod tests {
 
     #[test]
     fn serialize_structure() {
-        use rustc_serialize::{Encodable, Encoder};
-
         struct MyStruct {
             name: String,
             value: u32,
