@@ -7,6 +7,7 @@ authors = ["Livio Ribeiro <livioribeiro@outlook.com>"]
 byteorder = "0.4"
 rustc-serialize = "0.3"
 log = "0.3"
+url = "0.5"
 
 [dev-dependencies]
 env_logger = "0.3"

@@ -1,5 +1,6 @@
 extern crate byteorder;
 extern crate rustc_serialize;
+extern crate url;
 
 #[macro_use]
 extern crate log;
