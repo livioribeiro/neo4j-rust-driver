@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::prelude::*;
 use std::io::{self, Cursor};
 use rustc_serialize::{Encodable, Encoder};
-use byteorder::{self, WriteBytesExt, BigEndian};
+use byteorder::{WriteBytesExt, BigEndian};
 
 use super::marker as m;
 use super::STRUCTURE_PREFIX;
@@ -19,7 +19,6 @@ pub fn encode<T: Encodable>(object: &T) -> EncodeResult<Vec<u8>> {
 
 #[derive(Debug)]
 pub enum EncoderError {
-    EncodingError(byteorder::Error),
     IoError(io::Error),
     InvalidStructureLength,
 }
@@ -31,12 +30,6 @@ impl Error for EncoderError {
 impl fmt::Display for EncoderError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
-    }
-}
-
-impl From<byteorder::Error> for EncoderError {
-    fn from(error: byteorder::Error) -> Self {
-        EncoderError::EncodingError(error)
     }
 }
 

@@ -5,7 +5,7 @@ use std::io::prelude::*;
 use std::io;
 use std::string;
 use rustc_serialize::{Decodable, Decoder};
-use byteorder::{self, ReadBytesExt, BigEndian};
+use byteorder::{ReadBytesExt, BigEndian};
 
 use super::marker as m;
 
@@ -118,15 +118,6 @@ impl fmt::Display for DecoderError {
                 write!(f, "Expected field '{}', Found '{}'", exp, got)
             }
             _ => fmt::Debug::fmt(&self, f)
-        }
-    }
-}
-
-impl From<byteorder::Error> for DecoderError {
-    fn from(error: byteorder::Error) -> Self {
-        match error {
-            byteorder::Error::UnexpectedEOF => DecErr::UnexpectedEOF,
-            byteorder::Error::Io(e) => DecErr::Io(e),
         }
     }
 }

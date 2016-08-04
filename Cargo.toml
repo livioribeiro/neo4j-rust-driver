@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Livio Ribeiro <livioribeiro@outlook.com>"]
 
 [dependencies]
-byteorder = "0.4"
+byteorder = "0.5"
 rustc-serialize = "0.3"
 log = "0.3"
 
