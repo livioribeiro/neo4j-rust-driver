@@ -4,10 +4,11 @@ version = "0.1.0"
 authors = ["Livio Ribeiro <livioribeiro@outlook.com>"]
 
 [dependencies]
-byteorder = "0.4"
+byteorder = "0.5"
 rustc-serialize = "0.3"
-serde = "0.6"
+serde = "0.8"
 log = "0.3"
 
 [dev-dependencies]
 env_logger = "0.3"
+serde_macros = "0.8"

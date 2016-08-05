@@ -1,6 +1,12 @@
+#![cfg_attr(test, feature(custom_derive, plugin))]
+#![cfg_attr(test, plugin(serde_macros))]
+
 extern crate byteorder;
 extern crate rustc_serialize;
 extern crate serde;
+
+#[cfg(test)]
+extern crate serde_macros;
 
 #[macro_use]
 extern crate log;

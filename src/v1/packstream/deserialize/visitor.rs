@@ -1,16 +1,16 @@
 use std::io::Read;
 use serde::de;
 
-use super::{PackstreamDecoder, DecoderError};
+use super::{Deserializer, DeserializerError as DesErr};
 
 pub struct SeqVisitor<'a, R: Read + 'a> {
-    de: &'a mut PackstreamDecoder<R>,
+    de: &'a mut Deserializer<R>,
     size: usize,
     current: usize,
 }
 
 impl<'a, R: Read + 'a> SeqVisitor<'a, R> {
-    pub fn new(de: &'a mut PackstreamDecoder<R>, size: usize) -> Self {
+    pub fn new(de: &'a mut Deserializer<R>, size: usize) -> Self {
         SeqVisitor {
             de: de,
             size: size,
@@ -20,7 +20,7 @@ impl<'a, R: Read + 'a> SeqVisitor<'a, R> {
 }
 
 impl<'a, R: Read + 'a> de::SeqVisitor for SeqVisitor<'a, R> {
-    type Error = DecoderError;
+    type Error = DesErr;
 
     fn visit<T>(&mut self) -> Result<Option<T>, Self::Error>
         where T: de::Deserialize
@@ -34,7 +34,7 @@ impl<'a, R: Read + 'a> de::SeqVisitor for SeqVisitor<'a, R> {
 
      fn end(&mut self) -> Result<(), Self::Error> {
         if self.current < self.size {
-            return Err(DecoderError::UnexpectedEOF)
+            return Err(DesErr::UnexpectedEOF)
         }
 
         Ok(())
@@ -42,13 +42,13 @@ impl<'a, R: Read + 'a> de::SeqVisitor for SeqVisitor<'a, R> {
 }
 
 pub struct MapVisitor<'a, R: Read + 'a> {
-    de: &'a mut PackstreamDecoder<R>,
+    de: &'a mut Deserializer<R>,
     size: usize,
     current: usize,
 }
 
 impl<'a, R: Read> MapVisitor<'a, R> {
-    pub fn new(de: &'a mut PackstreamDecoder<R>, size: usize) -> Self {
+    pub fn new(de: &'a mut Deserializer<R>, size: usize) -> Self {
         MapVisitor {
             de: de,
             size: size,
@@ -58,7 +58,7 @@ impl<'a, R: Read> MapVisitor<'a, R> {
 }
 
 impl<'a, R: Read + 'a> de::MapVisitor for MapVisitor<'a, R> {
-    type Error = DecoderError;
+    type Error = DesErr;
 
     fn visit_key<K>(&mut self) -> Result<Option<K>, Self::Error>
         where K: de::Deserialize
@@ -72,7 +72,7 @@ impl<'a, R: Read + 'a> de::MapVisitor for MapVisitor<'a, R> {
     fn visit_value<V>(&mut self) -> Result<V, Self::Error>
         where V: de::Deserialize
     {
-        if self.current >= self.size { return Err(DecoderError::UnexpectedEOF) }
+        if self.current >= self.size { return Err(DesErr::UnexpectedEOF) }
         self.current += 1;
 
         let value = try!(de::Deserialize::deserialize(self.de));
@@ -81,7 +81,7 @@ impl<'a, R: Read + 'a> de::MapVisitor for MapVisitor<'a, R> {
 
     fn end(&mut self) -> Result<(), Self::Error> {
         if self.current < self.size {
-            return Err(DecoderError::UnexpectedEOF)
+            return Err(DesErr::UnexpectedEOF)
         }
 
         Ok(())

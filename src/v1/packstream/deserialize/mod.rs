@@ -1,107 +1,31 @@
-use std::convert::From;
-use std::error::Error;
-use std::io::prelude::*;
+use std::collections::VecDeque;
+use std::io::Read;
 
-// use rustc_serialize::{Decodable, Decoder};
-use serde::de::{self, Deserializer, Deserialize, Visitor};
-use serde::de::Error as SerdeError;
+use serde::de::{self, Error as SerdeError};
 use byteorder::{ReadBytesExt, BigEndian};
 
 mod visitor;
+mod types;
 pub mod error;
 
-use super::marker as m;
+use super::marker as M;
 use self::visitor::{SeqVisitor, MapVisitor};
-pub use self::error::DecoderError;
 
-use self::DecoderError as DecErr;
+pub use self::error::DeserializerError;
+use self::DeserializerError as DesErr;
 
-pub fn decode<T: Deserialize, R: Read>(source: &mut R) -> DecodeResult<T> {
-    let mut decoder = PackstreamDecoder::new(source);
-    Deserialize::deserialize(&mut decoder)
+pub fn from_reader<T: de::Deserialize, R: Read>(source: &mut R) -> DeserializeResult<T> {
+    let mut decoder = Deserializer::new(source);
+    de::Deserialize::deserialize(&mut decoder)
 }
 
-pub type DecodeResult<T> = Result<T, DecoderError>;
-
-fn is_tiny_int_pos(b: u8) -> bool { b >> 7 == 0x00 }
-fn is_tiny_int_neg(b: u8) -> bool { b >> 4 == m::TINY_INT_NEG_NIBBLE >> 4 }
-fn is_tiny_int(b: u8) -> bool { is_tiny_int_pos(b) || is_tiny_int_neg(b) }
-
-fn read_tiny_int(int: u8) -> i8 {
-    if is_tiny_int_pos(int) { int as i8 }
-    else { (int | 0b1111_0000) as i8 }
-}
-
-fn is_tiny_string(b: u8) -> bool { b >> 4 == m::TINY_STRING_NIBBLE >> 4 }
-fn is_tiny_list(b: u8) -> bool { b >> 4 == m::TINY_LIST_NIBBLE >> 4 }
-fn is_tiny_map(b: u8) -> bool { b >> 4 == m::TINY_MAP_NIBBLE >> 4 }
-fn is_tiny_structure(b: u8) -> bool { b >> 4 == m::TINY_STRUCT_NIBBLE >> 4 }
-
-fn is_int8_or_lesser(b: u8) -> bool {
-    b == m::INT_8 || is_tiny_int(b)
-}
-
-fn is_int16_or_lesser(b: u8) -> bool {
-    b == m::INT_16 || is_int8_or_lesser(b)
-}
-
-fn is_int32_or_lesser(b: u8) -> bool {
-    b == m::INT_32 || is_int16_or_lesser(b)
-}
-
-fn is_int64_or_lesser(b: u8) -> bool {
-    b == m::INT_64 || is_int32_or_lesser(b)
-}
-
-// fn is_string(b: u8) -> bool {
-//     is_tiny_string(b) || b == m::STRING_8
-//         || b == m::STRING_16 || b == m::STRING_32
-// }
-//
-// fn is_map(b: u8) -> bool {
-//     is_tiny_map(b) || b == m::MAP_8
-//         || b == m::MAP_16 || b == m::MAP_32
-// }
-//
-// fn is_structure(b: u8) -> bool {
-//     is_tiny_structure(b) || b == m::STRUCT_8 || b == m::STRUCT_16
-// }
-
-pub fn which(byte: u8) -> Option<&'static str> {
-    match byte {
-        m::NULL => Some("NULL"),
-        m::TRUE => Some("TRUE"),
-        m::FALSE => Some("FALSE"),
-        _ if is_tiny_int(byte) => Some("TINY_INT"),
-        m::INT_8 => Some("INT_8"),
-        m::INT_16 => Some("INT_16"),
-        m::INT_32 => Some("INT_32"),
-        m::INT_64 => Some("INT_64"),
-        m::FLOAT => Some("FLOAT"),
-        _ if is_tiny_string(byte) => Some("TINY_STRING"),
-        m::STRING_8 => Some("STRING_8"),
-        m::STRING_16 => Some("STRING_16"),
-        m::STRING_32 => Some("STRING_32"),
-        _ if is_tiny_list(byte) => Some("TINY_LIST"),
-        m::LIST_8 => Some("LIST_8"),
-        m::LIST_16 => Some("LIST_16"),
-        m::LIST_32 => Some("LIST_32"),
-        _ if is_tiny_map(byte) => Some("TINY_MAP"),
-        m::MAP_8 => Some("MAP_8"),
-        m::MAP_16 => Some("MAP_16"),
-        m::MAP_32 => Some("MAP_32"),
-        _ if is_tiny_structure(byte) => Some("TINY_STRUCT"),
-        m::STRUCT_8 => Some("STRUCT_8"),
-        m::STRUCT_16 => Some("STRUCT_16"),
-        _ => None
-    }
-}
+pub type DeserializeResult<T> = Result<T, DeserializerError>;
 
 macro_rules! wrong_marker {
     ($expected:expr, $got:ident) => {
-        Err(DecErr::UnexpectedMarker(
+        Err(DesErr::UnexpectedMarker(
             $expected,
-            which($got)
+            types::which($got)
                 .map(|m| m.to_owned())
                 .unwrap_or(format!("0x{:02X}", $got))
         ))
@@ -110,44 +34,51 @@ macro_rules! wrong_marker {
 
 macro_rules! wrong_input {
     ($expected:expr, $got:expr) => {
-        Err(DecErr::UnexpectedInput($expected, $got))
+        Err(DesErr::UnexpectedInput($expected, $got))
     }
 }
 
-pub struct PackstreamDecoder<R: Read> {
+pub struct Deserializer<R> {
     reader: R,
-    byte: Option<u8>,
+    buffer: VecDeque<u8>,
 }
 
-impl<R: Read> PackstreamDecoder<R> {
+impl<R: Read> Deserializer<R>
+{
     pub fn new(reader: R) -> Self {
-        PackstreamDecoder {
+        Deserializer {
             reader: reader,
-            byte: None,
+            buffer: VecDeque::new(),
         }
     }
 
-    fn peek(&mut self) -> Result<u8, DecoderError> {
-        match self.byte {
+    fn peek(&mut self) -> Result<u8, DesErr> {
+        match self.buffer.front().map(|b| *b) {
             Some(byte) => Ok(byte),
-            None => {
-                match self.reader.read_u8() {
-                    Ok(byte) => {
-                        self.byte = Some(byte);
-                        Ok(byte)
-                    },
-                    Err(e) => Err(From::from(e)),
-                }
-            }
+            None => self.peek_next()
+        }
+    }
+
+    fn peek_next(&mut self) -> Result<u8, DesErr> {
+        self.reader.read_u8()
+            .map(|b| { self.buffer.push_back(b); b })
+            .map_err(From::from)
+    }
+
+    fn next(&mut self) -> Result<u8, DesErr> {
+        if let Some(b) = self.buffer.pop_front() {
+            Ok(b)
+        } else {
+            self.reader.read_u8().map_err(From::from)
         }
     }
 
     fn bump(&mut self) {
-        self.byte.take();
+        self.buffer.pop_front();
     }
 
-    fn parse_value<V>(&mut self, mut visitor: V) -> Result<V::Value, DecoderError>
-        where V: Visitor,
+    fn parse_value<V>(&mut self, mut visitor: V) -> Result<V::Value, DesErr>
+        where V: de::Visitor,
     {
         let result = match try!(self.peek()) {
             0xC0 =>
@@ -212,7 +143,7 @@ impl<R: Read> PackstreamDecoder<R> {
                 let seq_visitor = SeqVisitor::new(self, size);
                 visitor.visit_seq(seq_visitor)
             }
-            value => return Err(DecErr::UnexpectedMarker("Type Marker".to_owned(), format!("{:02X}", value)))
+            value => return Err(DesErr::UnexpectedMarker("Type Marker".to_owned(), format!("{:02X}", value)))
         };
 
         self.bump();
@@ -220,24 +151,23 @@ impl<R: Read> PackstreamDecoder<R> {
         result
     }
 
-    fn parse_int(&mut self) -> Result<i64, DecoderError> {
-        let marker = try!(self.peek());
+    fn parse_int(&mut self) -> Result<i64, DesErr> {
+        let marker = try!(self.next());
 
-        if !is_int64_or_lesser(marker) {
-            // return wrong_marker!("INTEGER".to_owned(), marker)
-            return Err(DecoderError::UnexpectedType("Integer"))
+        if !types::is_int64_or_lesser(marker) {
+            return Err(DesErr::UnexpectedType("Integer"))
         }
 
         let value: i64;
-        if is_tiny_int(marker) {
-            value = read_tiny_int(marker) as i64;
-        } else if marker == m::INT_8 {
+        if types::is_tiny_int(marker) {
+            value = types::read_tiny_int(marker) as i64;
+        } else if marker == M::INT_8 {
             let value_read = try!(self.reader.read_i8());
             value = value_read as i64;
-        } else if marker == m::INT_16 {
+        } else if marker == M::INT_16 {
             let value_read = try!(self.reader.read_i16::<BigEndian>());
             value = value_read as i64;
-        } else if marker == m::INT_32 {
+        } else if marker == M::INT_32 {
             let value_read = try!(self.reader.read_i32::<BigEndian>());
             value = value_read as i64;
         } else {
@@ -245,34 +175,30 @@ impl<R: Read> PackstreamDecoder<R> {
             value = value_read as i64;
         }
 
-        self.bump();
-
         Ok(value)
     }
 
-    fn parse_float(&mut self) -> Result<f64, DecoderError> {
-        let marker = try!(self.peek());
+    fn parse_float(&mut self) -> Result<f64, DesErr> {
+        let marker = try!(self.next());
 
-        if marker != m::FLOAT {
+        if marker != M::FLOAT {
             return wrong_marker!("FLOAT".to_owned(), marker)
         }
-
-        self.bump();
 
         self.reader.read_f64::<BigEndian>().map_err(From::from)
     }
 
-    fn parse_string(&mut self) -> Result<String, DecoderError> {
-        let marker = try!(self.peek());
+    fn parse_string(&mut self) -> Result<String, DesErr> {
+        let marker = try!(self.next());
 
         let size;
-        if is_tiny_string(marker) {
+        if types::is_tiny_string(marker) {
             size = (marker & 0b0000_1111) as usize;
-        } else if marker == m::STRING_8 {
+        } else if marker == M::STRING_8 {
             size = try!(self.reader.read_u8()) as usize;
-        } else if marker == m::STRING_16 {
+        } else if marker == M::STRING_16 {
             size = try!(self.reader.read_u16::<BigEndian>()) as usize;
-        } else if marker == m::STRING_32 {
+        } else if marker == M::STRING_32 {
             size = try!(self.reader.read_u32::<BigEndian>()) as usize;
         } else {
             return wrong_marker!("STRING".to_owned(), marker)
@@ -299,126 +225,273 @@ impl<R: Read> PackstreamDecoder<R> {
             }
         }
 
-        self.bump();
-
         String::from_utf8(store).map_err(From::from)
     }
 }
 
-impl<R: Read> Deserializer for PackstreamDecoder<R> {
-    type Error = DecoderError;
+impl<R: Read> de::Deserializer for Deserializer<R> {
+    type Error = DesErr;
 
-    fn visit<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: Visitor
+    fn deserialize<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
     {
         self.parse_value(visitor)
     }
 
-    fn visit_usize<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
-        where V: Visitor,
+    fn deserialize_bool<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_usize<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
     {
         let value = try!(self.parse_int());
-        if value < 0 { return Err(DecoderError::type_mismatch(de::Type::Isize)) }
+        if value < 0 { return Err(DesErr::invalid_type(de::Type::Isize)) }
         visitor.visit_usize(value as usize)
     }
 
-    fn visit_u8<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
-        where V: Visitor,
+    fn deserialize_u8<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
     {
         let value = try!(self.parse_int());
         if value < 0 {
             if value < ::std::i32::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I64))
+                return Err(DesErr::invalid_type(de::Type::I64))
             } else if value < ::std::i16::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I32))
+                return Err(DesErr::invalid_type(de::Type::I32))
             } else if value < ::std::i8::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I16))
+                return Err(DesErr::invalid_type(de::Type::I16))
             } else {
-                return Err(DecoderError::type_mismatch(de::Type::I8))
+                return Err(DesErr::invalid_type(de::Type::I8))
             }
         } else {
             if value > ::std::u32::MAX as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::U64))
+                return Err(DesErr::invalid_type(de::Type::U64))
             } else if value > ::std::u16::MAX as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::U32))
+                return Err(DesErr::invalid_type(de::Type::U32))
             } else if value > ::std::u8::MAX as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::U16))
+                return Err(DesErr::invalid_type(de::Type::U16))
             }
         }
         visitor.visit_u8(value as u8)
     }
 
-    fn visit_u16<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
-        where V: Visitor,
+    fn deserialize_u16<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
     {
         let value = try!(self.parse_int());
         if value < 0 {
             if value < ::std::i32::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I64))
+                return Err(DesErr::invalid_type(de::Type::I64))
             } else if value < ::std::i16::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I32))
+                return Err(DesErr::invalid_type(de::Type::I32))
             } else if value < ::std::i8::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I16))
+                return Err(DesErr::invalid_type(de::Type::I16))
             } else {
-                return Err(DecoderError::type_mismatch(de::Type::I8))
+                return Err(DesErr::invalid_type(de::Type::I8))
             }
         } else {
             if value > ::std::u32::MAX as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::U64))
+                return Err(DesErr::invalid_type(de::Type::U64))
             } else if value > ::std::u16::MAX as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::U32))
+                return Err(DesErr::invalid_type(de::Type::U32))
             }
         }
         visitor.visit_u16(value as u16)
     }
 
-    fn visit_u32<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
-        where V: Visitor,
+    fn deserialize_u32<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
     {
         let value = try!(self.parse_int());
         if value < 0 {
             if value < ::std::i32::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I64))
+                return Err(DesErr::invalid_type(de::Type::I64))
             } else if value < ::std::i16::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I32))
+                return Err(DesErr::invalid_type(de::Type::I32))
             } else if value < ::std::i8::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I16))
+                return Err(DesErr::invalid_type(de::Type::I16))
             } else {
-                return Err(DecoderError::type_mismatch(de::Type::I8))
+                return Err(DesErr::invalid_type(de::Type::I8))
             }
         } else {
             if value > ::std::u32::MAX as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::U64))
+                return Err(DesErr::invalid_type(de::Type::U64))
             }
         }
         visitor.visit_u32(value as u32)
     }
 
-    fn visit_u64<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
-        where V: Visitor,
+    fn deserialize_u64<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
     {
         let value = try!(self.parse_int());
         if value < 0 {
             if value < ::std::i32::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I64))
+                return Err(DesErr::invalid_type(de::Type::I64))
             } else if value < ::std::i16::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I32))
+                return Err(DesErr::invalid_type(de::Type::I32))
             } else if value < ::std::i8::MIN as i64 {
-                return Err(DecoderError::type_mismatch(de::Type::I16))
+                return Err(DesErr::invalid_type(de::Type::I16))
             } else {
-                return Err(DecoderError::type_mismatch(de::Type::I8))
+                return Err(DesErr::invalid_type(de::Type::I8))
             }
         }
         visitor.visit_u64(value as u64)
     }
 
-    fn visit_option<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
-        where V: Visitor,
+    fn deserialize_isize<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_i8<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_i16<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_i32<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_i64<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_f32<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_f64<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_char<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_str<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_string<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_unit<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_option<V>(&mut self, mut visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
     {
         match try!(self.peek()) {
-            m::NULL => visitor.visit_none(),
+            M::NULL => visitor.visit_none(),
             _ => visitor.visit_some(self),
         }
+    }
+
+    fn deserialize_seq<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_seq_fixed_size<V>(&mut self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_bytes<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_map<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_unit_struct<V>(&mut self, _name: &'static str, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_newtype_struct<V>(&mut self, _name: &'static str, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_tuple_struct<V>(&mut self, _name: &'static str, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_struct<V>(&mut self, _name: &'static str, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_struct_field<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_tuple<V>(&mut self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
+    }
+
+    fn deserialize_enum<V>(
+        &mut self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        _visitor: V
+    ) -> Result<V::Value, Self::Error>
+        where V: de::EnumVisitor
+    {
+        Err(DesErr::invalid_type(de::Type::Enum))
+    }
+
+    fn deserialize_ignored_any<V>(&mut self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: de::Visitor
+    {
+        self.deserialize(visitor)
     }
 }
 
@@ -427,56 +500,56 @@ mod tests {
     use std::collections::BTreeMap;
     use std::string::String;
     use std::io::Cursor;
-    use super::decode;
-    use ::v1::packstream::marker as m;
+    use super::from_reader;
+    use ::v1::packstream::marker as M;
 
     #[test]
     fn deserialize_nil() {
         let mut input = Cursor::new(vec![0xC0]);
-        let _: () = decode(&mut input).unwrap();
+        let _: () = from_reader(&mut input).unwrap();
 
         let mut input = Cursor::new(vec![0xC0]);
-        let result: Option<()> = decode(&mut input).unwrap();
+        let result: Option<()> = from_reader(&mut input).unwrap();
         assert_eq!(None, result);
     }
 
     #[test]
     fn deserialize_bool() {
         let mut input = Cursor::new(vec![0xC3]);
-        let result: bool = decode(&mut input).unwrap();
+        let result: bool = from_reader(&mut input).unwrap();
         assert_eq!(true, result);
 
         let mut input = Cursor::new(vec![0xC2]);
-        let result: bool = decode(&mut input).unwrap();
+        let result: bool = from_reader(&mut input).unwrap();
         assert_eq!(false, result);
     }
 
     // Integer 64
     #[test]
     fn deserialize_int64_positive() {
-        let mut input = Cursor::new(vec![m::INT_64, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
-        let result: u64 = decode(&mut input).unwrap();
-        assert_eq!(m::RANGE_POS_INT_64.1 as u64, result);
+        let mut input = Cursor::new(vec![M::INT_64, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        let result: u64 = from_reader(&mut input).unwrap();
+        assert_eq!(M::RANGE_POS_INT_64.1 as u64, result);
     }
 
     #[test]
     fn deserialize_int64_negative() {
-        let mut input = Cursor::new(vec![m::INT_64, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-        let result: i64 = decode(&mut input).unwrap();
-        assert_eq!(m::RANGE_NEG_INT_64.0, result);
+        let mut input = Cursor::new(vec![M::INT_64, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        let result: i64 = from_reader(&mut input).unwrap();
+        assert_eq!(M::RANGE_NEG_INT_64.0, result);
     }
 
     #[test]
     fn deserialize_small_int_into_int64_positive() {
         let mut input = Cursor::new(vec![0x01]);
-        let result: u64 = decode(&mut input).unwrap();
+        let result: u64 = from_reader(&mut input).unwrap();
         assert_eq!(1, result);
     }
 
     #[test]
     fn deserialize_small_int_into_int64_negative() {
         let mut input = Cursor::new(vec![0xFF]);
-        let result: i64 = decode(&mut input).unwrap();
+        let result: i64 = from_reader(&mut input).unwrap();
         assert_eq!(-1, result);
     }
 
@@ -484,49 +557,49 @@ mod tests {
     #[should_panic(expected = "UnexpectedType(\"i8\")")]
     fn negative_int_into_u64_should_panic() {
         let mut input = Cursor::new(vec![0xFF]);
-        let _: u64 = decode(&mut input).unwrap();
+        let _: u64 = from_reader(&mut input).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "UnexpectedType(\"u64\")")]
     fn positive_int64_into_smaller_should_fail() {
-        let mut input = Cursor::new(vec![m::INT_64, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
-        let _: u32 = decode(&mut input).unwrap();
+        let mut input = Cursor::new(vec![M::INT_64, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        let _: u32 = from_reader(&mut input).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "UnexpectedType(\"i64\")")]
     fn negative_int64_into_smaller_should_fail() {
-        let mut input = Cursor::new(vec![m::INT_64, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-        let _: i32 = decode(&mut input).unwrap();
+        let mut input = Cursor::new(vec![M::INT_64, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        let _: i32 = from_reader(&mut input).unwrap();
     }
 
     // Integer 32
     #[test]
     fn deserialize_int32_positive() {
-        let mut input = Cursor::new(vec![m::INT_32, 0x7F, 0xFF, 0xFF, 0xFF]);
-        let result: u32 = decode(&mut input).unwrap();
-        assert_eq!(m::RANGE_POS_INT_32.1 as u32, result);
+        let mut input = Cursor::new(vec![M::INT_32, 0x7F, 0xFF, 0xFF, 0xFF]);
+        let result: u32 = from_reader(&mut input).unwrap();
+        assert_eq!(M::RANGE_POS_INT_32.1 as u32, result);
     }
 
     #[test]
     fn deserialize_int32_negative() {
-        let mut input = Cursor::new(vec![m::INT_32, 0x80, 0x00, 0x00, 0x00]);
-        let result: i32 = decode(&mut input).unwrap();
-        assert_eq!(m::RANGE_NEG_INT_32.0 as i32, result);
+        let mut input = Cursor::new(vec![M::INT_32, 0x80, 0x00, 0x00, 0x00]);
+        let result: i32 = from_reader(&mut input).unwrap();
+        assert_eq!(M::RANGE_NEG_INT_32.0 as i32, result);
     }
 
     #[test]
     fn deserialize_small_int_into_int32_positive() {
         let mut input = Cursor::new(vec![0x01]);
-        let result: u32 = decode(&mut input).unwrap();
+        let result: u32 = from_reader(&mut input).unwrap();
         assert_eq!(1, result);
     }
 
     #[test]
     fn deserialize_small_int_into_int32_negative() {
         let mut input = Cursor::new(vec![0xFF]);
-        let result: i32 = decode(&mut input).unwrap();
+        let result: i32 = from_reader(&mut input).unwrap();
         assert_eq!(-1, result);
     }
 
@@ -534,49 +607,49 @@ mod tests {
     #[should_panic(expected = "UnexpectedType(\"i8\")")]
     fn negative_int_into_u32_should_panic() {
         let mut input = Cursor::new(vec![0xFF]);
-        let _: u32 = decode(&mut input).unwrap();
+        let _: u32 = from_reader(&mut input).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "UnexpectedType(\"u32\")")]
     fn positive_int32_into_smaller_should_fail() {
-        let mut input = Cursor::new(vec![m::INT_32, 0x7F, 0xFF, 0xFF, 0xFF]);
-        let _: u16 = decode(&mut input).unwrap();
+        let mut input = Cursor::new(vec![M::INT_32, 0x7F, 0xFF, 0xFF, 0xFF]);
+        let _: u16 = from_reader(&mut input).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "UnexpectedType(\"i32\")")]
     fn negative_int32_into_smaller_should_fail() {
-        let mut input = Cursor::new(vec![m::INT_32, 0x80, 0x00, 0x00, 0x00]);
-        let _: i16 = decode(&mut input).unwrap();
+        let mut input = Cursor::new(vec![M::INT_32, 0x80, 0x00, 0x00, 0x00]);
+        let _: i16 = from_reader(&mut input).unwrap();
     }
 
     // Integer 16
     #[test]
     fn deserialize_int16_positive() {
-        let mut input = Cursor::new(vec![m::INT_16, 0x7F, 0xFF]);
-        let result: u16 = decode(&mut input).unwrap();
-        assert_eq!(m::RANGE_POS_INT_16.1 as u16, result);
+        let mut input = Cursor::new(vec![M::INT_16, 0x7F, 0xFF]);
+        let result: u16 = from_reader(&mut input).unwrap();
+        assert_eq!(M::RANGE_POS_INT_16.1 as u16, result);
     }
 
     #[test]
     fn deserialize_int16_negative() {
-        let mut input = Cursor::new(vec![m::INT_16, 0x80, 0x00]);
-        let result: i16 = decode(&mut input).unwrap();
-        assert_eq!(m::RANGE_NEG_INT_16.0 as i16, result);
+        let mut input = Cursor::new(vec![M::INT_16, 0x80, 0x00]);
+        let result: i16 = from_reader(&mut input).unwrap();
+        assert_eq!(M::RANGE_NEG_INT_16.0 as i16, result);
     }
 
     #[test]
     fn deserialize_small_int_into_int16_positive() {
         let mut input = Cursor::new(vec![0x01]);
-        let result: u16 = decode(&mut input).unwrap();
+        let result: u16 = from_reader(&mut input).unwrap();
         assert_eq!(1, result);
     }
 
     #[test]
     fn deserialize_small_int_into_int16_negative() {
         let mut input = Cursor::new(vec![0xFF]);
-        let result: i16 = decode(&mut input).unwrap();
+        let result: i16 = from_reader(&mut input).unwrap();
         assert_eq!(-1, result);
     }
 
@@ -584,68 +657,68 @@ mod tests {
     #[should_panic(expected = "UnexpectedType(\"i8\")")]
     fn negative_int_into_u16_should_panic() {
         let mut input = Cursor::new(vec![0xFF]);
-        let _: u16 = decode(&mut input).unwrap();
+        let _: u16 = from_reader(&mut input).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "UnexpectedType(\"u16\")")]
     fn positive_int16_into_smaller_should_fail() {
-        let mut input = Cursor::new(vec![m::INT_16, 0x7F, 0xFF]);
-        let _: u8 = decode(&mut input).unwrap();
+        let mut input = Cursor::new(vec![M::INT_16, 0x7F, 0xFF]);
+        let _: u8 = from_reader(&mut input).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "UnexpectedType(\"i16\")")]
     fn negative_int16_into_smaller_should_fail() {
-        let mut input = Cursor::new(vec![m::INT_16, 0x80, 0x00]);
-        let _: i8 = decode(&mut input).unwrap();
+        let mut input = Cursor::new(vec![M::INT_16, 0x80, 0x00]);
+        let _: i8 = from_reader(&mut input).unwrap();
     }
 
     // Integer 8
     #[test]
     fn deserialize_int8_positive() {
         let mut input = Cursor::new(vec![0x7F]);
-        let result: u8 = decode(&mut input).unwrap();
-        assert_eq!(m::RANGE_TINY_INT.1 as u8, result);
+        let result: u8 = from_reader(&mut input).unwrap();
+        assert_eq!(M::RANGE_TINY_INT.1 as u8, result);
     }
 
     #[test]
     fn deserialize_int8_negative() {
-        let mut input = Cursor::new(vec![m::INT_8, 0x80]);
-        let result: i8 = decode(&mut input).unwrap();
-        assert_eq!(m::RANGE_NEG_INT_8.0 as i8, result);
+        let mut input = Cursor::new(vec![M::INT_8, 0x80]);
+        let result: i8 = from_reader(&mut input).unwrap();
+        assert_eq!(M::RANGE_NEG_INT_8.0 as i8, result);
 
         let mut input = Cursor::new(vec![0xF0]);
-        let result: i8 = decode(&mut input).unwrap();
-        assert_eq!(m::RANGE_TINY_INT.0 as i8, result);
+        let result: i8 = from_reader(&mut input).unwrap();
+        assert_eq!(M::RANGE_TINY_INT.0 as i8, result);
     }
 
     #[test]
     #[should_panic(expected = "UnexpectedType(\"i8\")")]
     fn negative_int_into_u8_should_panic() {
-        let mut input = Cursor::new(vec![m::INT_8, 0x80]);
-        let _: u8 = decode(&mut input).unwrap();
+        let mut input = Cursor::new(vec![M::INT_8, 0x80]);
+        let _: u8 = from_reader(&mut input).unwrap();
     }
 
     #[test]
     #[should_panic(expected = "UnexpectedType(\"i8\")")]
     fn negative_small_int_into_u8_should_panic() {
         let mut input = Cursor::new(vec![0xF0]);
-        let _: u8 = decode(&mut input).unwrap();
+        let _: u8 = from_reader(&mut input).unwrap();
     }
 
     // Float
     #[test]
     fn deserialize_float_positive() {
-        let mut input = Cursor::new(vec![m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]);
-        let result: f64 = decode(&mut input).unwrap();
+        let mut input = Cursor::new(vec![M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]);
+        let result: f64 = from_reader(&mut input).unwrap();
         assert_eq!(1.1, result);
     }
 
     #[test]
     fn deserialize_float_negative() {
-        let mut input = Cursor::new(vec![m::FLOAT, 0xBF, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]);
-        let result: f64 = decode(&mut input).unwrap();
+        let mut input = Cursor::new(vec![M::FLOAT, 0xBF, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]);
+        let result: f64 = from_reader(&mut input).unwrap();
         assert_eq!(-1.1, result);
     }
 
@@ -654,12 +727,12 @@ mod tests {
     fn deserialize_string32() {
         let size = 70_000;
         let mut input = Cursor::new((0..size).fold(
-            vec![m::STRING_32, 0x00, 0x01, 0x11, 0x70],
+            vec![M::STRING_32, 0x00, 0x01, 0x11, 0x70],
             |mut acc, _| { acc.push(b'A'); acc }
         ));
 
         let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
-        let result: String = decode(&mut input).unwrap();
+        let result: String = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -668,12 +741,12 @@ mod tests {
     fn deserialize_string16() {
         let size = 5_000;
         let mut input = Cursor::new((0..size).fold(
-            vec![m::STRING_16, 0x13, 0x88],
+            vec![M::STRING_16, 0x13, 0x88],
             |mut acc, _| { acc.push(b'A'); acc }
         ));
 
         let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
-        let result: String = decode(&mut input).unwrap();
+        let result: String = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -682,12 +755,12 @@ mod tests {
     fn deserialize_string8() {
         let size = 200;
         let mut input = Cursor::new((0..size).fold(
-            vec![m::STRING_8, 0xC8],
+            vec![M::STRING_8, 0xC8],
             |mut acc, _| { acc.push(b'A'); acc }
         ));
 
         let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
-        let result: String = decode(&mut input).unwrap();
+        let result: String = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -695,14 +768,14 @@ mod tests {
     #[test]
     fn deserialize_tiny_string() {
         for marker in 0x80..0x8F {
-            let size = marker - m::TINY_STRING_NIBBLE;
+            let size = marker - M::TINY_STRING_NIBBLE;
             let mut input = Cursor::new((0..size).fold(
                 vec![marker],
                 |mut acc, _| { acc.push(b'A'); acc }
             ));
 
             let expected = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
-            let result: String = decode(&mut input).unwrap();
+            let result: String = from_reader(&mut input).unwrap();
 
             assert_eq!(expected, result);
         }
@@ -712,7 +785,7 @@ mod tests {
     fn deserialize_char() {
         for c in b'A'..b'Z' {
             let mut input = Cursor::new(vec![0x81, c]);
-            let result: char = decode(&mut input).unwrap();
+            let result: char = from_reader(&mut input).unwrap();
 
             assert_eq!(c as char, result);
         }
@@ -723,12 +796,12 @@ mod tests {
     fn deserialize_list32() {
         let size = 70_000;
         let mut input = Cursor::new((0..size).fold(
-            vec![m::LIST_32, 0x00, 0x01, 0x11, 0x70],
+            vec![M::LIST_32, 0x00, 0x01, 0x11, 0x70],
             |mut acc, _| { acc.push(0x01); acc }
         ));
 
         let expected = vec![1; size];
-        let result: Vec<u32> = decode(&mut input).unwrap();
+        let result: Vec<u32> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -737,12 +810,12 @@ mod tests {
     fn deserialize_list16() {
         let size = 5_000;
         let mut input = Cursor::new((0..size).fold(
-            vec![m::LIST_16, 0x13, 0x88],
+            vec![M::LIST_16, 0x13, 0x88],
             |mut acc, _| { acc.push(0x01); acc }
         ));
 
         let expected = vec![1; size];
-        let result: Vec<u32> = decode(&mut input).unwrap();
+        let result: Vec<u32> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -751,12 +824,12 @@ mod tests {
     fn deserialize_list8() {
         let size = 200;
         let mut input = Cursor::new((0..size).fold(
-            vec![m::LIST_8, 0xC8],
+            vec![M::LIST_8, 0xC8],
             |mut acc, _| { acc.push(0x01); acc }
         ));
 
         let expected = vec![1; size];
-        let result: Vec<u32> = decode(&mut input).unwrap();
+        let result: Vec<u32> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -764,14 +837,14 @@ mod tests {
     #[test]
     fn deserialize_tiny_list() {
         for marker in 0x90..0x9F {
-            let size = (marker - m::TINY_LIST_NIBBLE) as usize;
+            let size = (marker - M::TINY_LIST_NIBBLE) as usize;
             let mut input = Cursor::new((0..size).fold(
                 vec![marker],
                 |mut acc, _| { acc.push(0x01); acc }
             ));
 
             let expected = vec![1; size];
-            let result: Vec<u32> = decode(&mut input).unwrap();
+            let result: Vec<u32> = from_reader(&mut input).unwrap();
 
             assert_eq!(expected, result);
         }
@@ -782,22 +855,22 @@ mod tests {
         let size = 3;
 
         let mut input = Cursor::new(
-            vec![m::TINY_LIST_NIBBLE + size as u8,
-                 m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+            vec![M::TINY_LIST_NIBBLE + size as u8,
+                 M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                  0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                  0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                  0x77, 0x78, 0x79, 0x7A,
-                 m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                 M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                  0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                  0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                  0x77, 0x78, 0x79, 0x7A,
-                 m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                 M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                  0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                  0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                  0x77, 0x78, 0x79, 0x7A]
         );
 
-        let result: Vec<String> = decode(&mut input).unwrap();
+        let result: Vec<String> = from_reader(&mut input).unwrap();
         let expected = vec!["abcdefghijklmnopqrstuvwxyz"; size];
 
         assert_eq!(expected, result);
@@ -808,13 +881,13 @@ mod tests {
         let size = 3;
 
         let mut input = Cursor::new(
-            vec![m::TINY_LIST_NIBBLE + size as u8,
-                 m::INT_16, 0x7D, 0x00,
-                 m::INT_16, 0x7D, 0x00,
-                 m::INT_16, 0x7D, 0x00]
+            vec![M::TINY_LIST_NIBBLE + size as u8,
+                 M::INT_16, 0x7D, 0x00,
+                 M::INT_16, 0x7D, 0x00,
+                 M::INT_16, 0x7D, 0x00]
              );
 
-        let result: Vec<u32> = decode(&mut input).unwrap();
+        let result: Vec<u32> = from_reader(&mut input).unwrap();
         let expected = vec![32_000; size];
 
         assert_eq!(expected, result);
@@ -825,13 +898,13 @@ mod tests {
         let size = 3;
 
         let mut input = Cursor::new(
-            vec![m::TINY_LIST_NIBBLE + size as u8,
-                 m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                 m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                 m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]
+            vec![M::TINY_LIST_NIBBLE + size as u8,
+                 M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                 M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                 M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]
              );
 
-        let result: Vec<f32> = decode(&mut input).unwrap();
+        let result: Vec<f32> = from_reader(&mut input).unwrap();
         let expected = vec![1.1; size];
 
         assert_eq!(expected, result);
@@ -842,11 +915,11 @@ mod tests {
         let size = 4;
 
         let mut input = Cursor::new(
-            vec![m::TINY_LIST_NIBBLE + size as u8,
-                 m::TRUE, m::FALSE, m::TRUE, m::FALSE]
+            vec![M::TINY_LIST_NIBBLE + size as u8,
+                 M::TRUE, M::FALSE, M::TRUE, M::FALSE]
              );
 
-        let result: Vec<bool> = decode(&mut input).unwrap();
+        let result: Vec<bool> = from_reader(&mut input).unwrap();
         let expected = vec![true, false, true, false];
 
         assert_eq!(expected, result);
@@ -857,13 +930,13 @@ mod tests {
         let size = 3;
 
         let mut input = Cursor::new(
-            vec![m::TINY_LIST_NIBBLE + size as u8,
+            vec![M::TINY_LIST_NIBBLE + size as u8,
                  0x01,
-                 m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                 m::TINY_STRING_NIBBLE + 1, 0x41]
+                 M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                 M::TINY_STRING_NIBBLE + 1, 0x41]
              );
 
-        let result: (u32, f64, String) = decode(&mut input).unwrap();
+        let result: (u32, f64, String) = from_reader(&mut input).unwrap();
         let expected = (1, 1.1, "A".to_owned());
 
         assert_eq!(expected, result);
@@ -875,7 +948,7 @@ mod tests {
         let size = 70_000;
 
         let mut input = Cursor::new((0..size).fold(
-            vec![m::MAP_32, 0x00, 0x01, 0x11, 0x70],
+            vec![M::MAP_32, 0x00, 0x01, 0x11, 0x70],
             |mut acc, i| {
                 let b1 = 48 + ((i % 100000) / 10000) as u8;
                 let b2 = 48 + ((i % 10000) / 1000) as u8;
@@ -892,7 +965,7 @@ mod tests {
             |mut acc, i| { acc.insert(format!("{:05}", i), 1); acc }
         );
 
-        let result: BTreeMap<String, u16> = decode(&mut input).unwrap();
+        let result: BTreeMap<String, u16> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -902,7 +975,7 @@ mod tests {
         let size = 5_000;
 
         let mut input = Cursor::new((0..size).fold(
-            vec![m::MAP_16, 0x13, 0x88],
+            vec![M::MAP_16, 0x13, 0x88],
             |mut acc, i| {
                 let b1 = 48 + ((i % 10000) / 1000) as u8;
                 let b2 = 48 + ((i % 1000) / 100) as u8;
@@ -918,7 +991,7 @@ mod tests {
             |mut acc, i| { acc.insert(format!("{:04}", i), 1); acc }
         );
 
-        let result: BTreeMap<String, u16> = decode(&mut input).unwrap();
+        let result: BTreeMap<String, u16> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -928,7 +1001,7 @@ mod tests {
         let size = 200;
 
         let mut input = Cursor::new((0..size).fold(
-            vec![m::MAP_8, 0xC8],
+            vec![M::MAP_8, 0xC8],
             |mut acc, i| {
                 let b1 = 48 + ((i % 1000) / 100) as u8;
                 let b2 = 48 + ((i % 100) / 10) as u8;
@@ -943,7 +1016,7 @@ mod tests {
             |mut acc, i| { acc.insert(format!("{:03}", i), 1); acc }
         );
 
-        let result: BTreeMap<String, u16> = decode(&mut input).unwrap();
+        let result: BTreeMap<String, u16> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -953,7 +1026,7 @@ mod tests {
         let size = 3;
 
         let mut input = Cursor::new((0..size).fold(
-            vec![m::TINY_MAP_NIBBLE + size],
+            vec![M::TINY_MAP_NIBBLE + size],
             |mut acc, i| {
                 acc.extend([0x81, 0x30 + i].iter());
                 acc.push(0x01);
@@ -966,7 +1039,7 @@ mod tests {
             |mut acc, i| { acc.insert(format!("{}", i), 1); acc }
         );
 
-        let result: BTreeMap<String, u16> = decode(&mut input).unwrap();
+        let result: BTreeMap<String, u16> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -976,19 +1049,19 @@ mod tests {
         let size = 3;
 
         let mut input = Cursor::new(
-            vec![m::TINY_MAP_NIBBLE + size,
+            vec![M::TINY_MAP_NIBBLE + size,
                  0x81, 0x41,
-                 m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                 M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                  0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                  0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                  0x77, 0x78, 0x79, 0x7A,
                  0x81, 0x42,
-                 m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                 M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                  0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                  0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                  0x77, 0x78, 0x79, 0x7A,
                  0x81, 0x43,
-                 m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                 M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                  0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                  0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                  0x77, 0x78, 0x79, 0x7A]
@@ -1002,7 +1075,7 @@ mod tests {
             expected
         };
 
-        let result: BTreeMap<String, String> = decode(&mut input).unwrap();
+        let result: BTreeMap<String, String> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -1012,10 +1085,10 @@ mod tests {
         let size = 3;
 
         let mut input = Cursor::new(
-            vec![m::TINY_MAP_NIBBLE + size,
-                 0x81, 0x41, m::INT_16, 0x7D, 0x00,
-                 0x81, 0x42, m::INT_16, 0x7D, 0x00,
-                 0x81, 0x43, m::INT_16, 0x7D, 0x00]
+            vec![M::TINY_MAP_NIBBLE + size,
+                 0x81, 0x41, M::INT_16, 0x7D, 0x00,
+                 0x81, 0x42, M::INT_16, 0x7D, 0x00,
+                 0x81, 0x43, M::INT_16, 0x7D, 0x00]
         );
 
         let expected = {
@@ -1026,7 +1099,7 @@ mod tests {
             expected
         };
 
-        let result: BTreeMap<String, u32> = decode(&mut input).unwrap();
+        let result: BTreeMap<String, u32> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -1036,10 +1109,10 @@ mod tests {
         let size = 3;
 
         let mut input = Cursor::new(
-            vec![m::TINY_MAP_NIBBLE + size,
-                 0x81, 0x41, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                 0x81, 0x42, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                 0x81, 0x43, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]
+            vec![M::TINY_MAP_NIBBLE + size,
+                 0x81, 0x41, M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                 0x81, 0x42, M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                 0x81, 0x43, M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A]
         );
 
         let expected = {
@@ -1050,7 +1123,7 @@ mod tests {
             expected
         };
 
-        let result: BTreeMap<String, f64> = decode(&mut input).unwrap();
+        let result: BTreeMap<String, f64> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -1060,11 +1133,11 @@ mod tests {
         let size = 4;
 
         let mut input = Cursor::new(
-            vec![m::TINY_MAP_NIBBLE + size,
-                 0x81, 0x41, m::TRUE,
-                 0x81, 0x42, m::FALSE,
-                 0x81, 0x43, m::TRUE,
-                 0x81, 0x44, m::FALSE]
+            vec![M::TINY_MAP_NIBBLE + size,
+                 0x81, 0x41, M::TRUE,
+                 0x81, 0x42, M::FALSE,
+                 0x81, 0x43, M::TRUE,
+                 0x81, 0x44, M::FALSE]
         );
 
         let expected = {
@@ -1076,7 +1149,7 @@ mod tests {
             expected
         };
 
-        let result: BTreeMap<String, bool> = decode(&mut input).unwrap();
+        let result: BTreeMap<String, bool> = from_reader(&mut input).unwrap();
 
         assert_eq!(expected, result);
     }
@@ -1120,7 +1193,7 @@ mod tests {
     //         A249: u16, A250: u16, A251: u16, A252: u16, A253: u16, A254: u16, A255: u16, A256: u16,
     //     }
     //
-    //     let mut input = Cursor::new(vec![m::MAP_16, 0x01, 0x00,
+    //     let mut input = Cursor::new(vec![M::MAP_16, 0x01, 0x00,
     //         0x84, 0x41, 0x30, 0x30, 0x31, 0x01, 0x84, 0x41, 0x30, 0x30, 0x32, 0x01, 0x84, 0x41, 0x30, 0x30, 0x33, 0x01, 0x84, 0x41, 0x30, 0x30, 0x34, 0x01, 0x84, 0x41, 0x30, 0x30, 0x35, 0x01, 0x84, 0x41, 0x30, 0x30, 0x36, 0x01, 0x84, 0x41, 0x30, 0x30, 0x37, 0x01, 0x84, 0x41, 0x30, 0x30, 0x38, 0x01,
     //         0x84, 0x41, 0x30, 0x30, 0x39, 0x01, 0x84, 0x41, 0x30, 0x31, 0x30, 0x01, 0x84, 0x41, 0x30, 0x31, 0x31, 0x01, 0x84, 0x41, 0x30, 0x31, 0x32, 0x01, 0x84, 0x41, 0x30, 0x31, 0x33, 0x01, 0x84, 0x41, 0x30, 0x31, 0x34, 0x01, 0x84, 0x41, 0x30, 0x31, 0x35, 0x01, 0x84, 0x41, 0x30, 0x31, 0x36, 0x01,
     //         0x84, 0x41, 0x30, 0x31, 0x37, 0x01, 0x84, 0x41, 0x30, 0x31, 0x38, 0x01, 0x84, 0x41, 0x30, 0x31, 0x39, 0x01, 0x84, 0x41, 0x30, 0x32, 0x30, 0x01, 0x84, 0x41, 0x30, 0x32, 0x31, 0x01, 0x84, 0x41, 0x30, 0x32, 0x32, 0x01, 0x84, 0x41, 0x30, 0x32, 0x33, 0x01, 0x84, 0x41, 0x30, 0x32, 0x34, 0x01,
@@ -1190,7 +1263,7 @@ mod tests {
     //         A249: 1, A250: 1, A251: 1, A252: 1, A253: 1, A254: 1, A255: 1, A256: 1,
     //     };
     //
-    //     let result: MyStruct = decode(&mut input).unwrap();
+    //     let result: MyStruct = from_reader(&mut input).unwrap();
     //
     //     assert_eq!(expected, result);
     // }
@@ -1206,7 +1279,7 @@ mod tests {
     //         M: u16, N: u16, O: u16, P: u16,
     //     }
     //
-    //     let mut input = Cursor::new(vec![m::MAP_8, 0x10,
+    //     let mut input = Cursor::new(vec![M::MAP_8, 0x10,
     //         0x81, 0x41, 0x01, 0x81, 0x42, 0x01, 0x81, 0x43, 0x01, 0x81, 0x44, 0x01,
     //         0x81, 0x45, 0x01, 0x81, 0x46, 0x01, 0x81, 0x47, 0x01, 0x81, 0x48, 0x01,
     //         0x81, 0x49, 0x01, 0x81, 0x4A, 0x01, 0x81, 0x4B, 0x01, 0x81, 0x4C, 0x01,
@@ -1220,7 +1293,7 @@ mod tests {
     //         M: 1, N: 1, O: 1, P: 1,
     //     };
     //
-    //     let result: MyStruct = decode(&mut input).unwrap();
+    //     let result: MyStruct = from_reader(&mut input).unwrap();
     //
     //     assert_eq!(expected, result);
     // }
@@ -1235,9 +1308,9 @@ mod tests {
     //         C: String,
     //     }
     //
-    //     let mut input = Cursor::new(vec![m::TINY_MAP_NIBBLE + 0x03,
+    //     let mut input = Cursor::new(vec![M::TINY_MAP_NIBBLE + 0x03,
     //         0x81, 0x41, 0x01,
-    //         0x81, 0x42, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+    //         0x81, 0x42, M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
     //         0x81, 0x43, 0x81, 0x43
     //     ]);
     //
@@ -1247,7 +1320,7 @@ mod tests {
     //         C: "C".to_owned(),
     //     };
     //
-    //     let result: MyStruct = decode(&mut input).unwrap();
+    //     let result: MyStruct = from_reader(&mut input).unwrap();
     //
     //     assert_eq!(expected, result);
     // }
@@ -1263,9 +1336,9 @@ mod tests {
     //         C: String,
     //     }
     //
-    //     let mut input = Cursor::new(vec![m::TINY_STRUCT_NIBBLE + 0x03, 0x22,
+    //     let mut input = Cursor::new(vec![M::TINY_STRUCT_NIBBLE + 0x03, 0x22,
     //         0xC9, 0x7D, 0x00,
-    //         m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+    //         M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
     //         0x81, 0x43
     //     ]);
     //
@@ -1276,7 +1349,7 @@ mod tests {
     //         C: "C".to_owned(),
     //     };
     //
-    //     let result: MyStruct = decode(&mut input).unwrap();
+    //     let result: MyStruct = from_reader(&mut input).unwrap();
     //
     //     assert_eq!(expected, result);
     // }
@@ -1296,7 +1369,7 @@ mod tests {
     //     }
     //
     //     let mut input = Cursor::new((0..size).fold(
-    //         vec![m::STRUCT_8, 0x10, 0x22],
+    //         vec![M::STRUCT_8, 0x10, 0x22],
     //         |mut acc, _| { acc.push(0x01); acc }
     //     ));
     //
@@ -1308,7 +1381,7 @@ mod tests {
     //         M: 1, N: 1, O: 1, P: 1,
     //     };
     //
-    //     let result: MyStruct = decode(&mut input).unwrap();
+    //     let result: MyStruct = from_reader(&mut input).unwrap();
     //
     //     assert_eq!(expected, result);
     // }
@@ -1356,7 +1429,7 @@ mod tests {
     //     }
     //
     //     let mut input = Cursor::new((0..size).fold(
-    //         vec![m::STRUCT_16, 0x01, 0x00, 0x22],
+    //         vec![M::STRUCT_16, 0x01, 0x00, 0x22],
     //         |mut acc, _| { acc.push(0x01); acc }
     //     ));
     //
@@ -1396,7 +1469,7 @@ mod tests {
     //         A249: 1, A250: 1, A251: 1, A252: 1, A253: 1, A254: 1, A255: 1, A256: 1,
     //     };
     //
-    //     let result: MyStruct = decode(&mut input).unwrap();
+    //     let result: MyStruct = from_reader(&mut input).unwrap();
     //
     //     assert_eq!(expected, result);
     // }
@@ -1410,8 +1483,8 @@ mod tests {
     //
     //     let mut input = Cursor::new(vec![0x81, 0x41]);
     //
-    //     let expected = MyEnum::A;
-    //     let result: MyEnum = decode(&mut input).unwrap();
+    //     let expected = MyEnuM::A;
+    //     let result: MyEnum = from_reader(&mut input).unwrap();
     //
     //     assert_eq!(expected, result);
     // }
@@ -1423,12 +1496,12 @@ mod tests {
     //         A(u16, u16), B(f32, f32),
     //     }
     //
-    //     let mut input = Cursor::new(vec![m::TINY_MAP_NIBBLE + 0x01,
+    //     let mut input = Cursor::new(vec![M::TINY_MAP_NIBBLE + 0x01,
     //                                      0x81, 0x41,
     //                                      0x92, 0x01, 0x02]);
     //
-    //     let expected = MyEnum::A(1, 2);
-    //     let result: MyEnum = decode(&mut input).unwrap();
+    //     let expected = MyEnuM::A(1, 2);
+    //     let result: MyEnum = from_reader(&mut input).unwrap();
     //
     //     assert_eq!(expected, result);
     // }
@@ -1441,10 +1514,10 @@ mod tests {
     //         A(u16, u16), B(f32, f32),
     //     }
     //
-    //     let mut input = Cursor::new(vec![m::TINY_MAP_NIBBLE + 0x02,
+    //     let mut input = Cursor::new(vec![M::TINY_MAP_NIBBLE + 0x02,
     //                                      0x81, 0x41,
     //                                      0x92, 0x01, 0x02]);
     //
-    //     let _: MyEnum = decode(&mut input).unwrap();
+    //     let _: MyEnum = from_reader(&mut input).unwrap();
     // }
 }

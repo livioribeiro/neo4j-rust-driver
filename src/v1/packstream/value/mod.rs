@@ -2,7 +2,7 @@ use std::io::Cursor;
 use std::collections::BTreeMap;
 use std::convert::{From, Into};
 use std::string;
-// use rustc_serialize::{Encodable, Encoder};
+
 use serde::{Serializer, Serialize};
 use byteorder::{WriteBytesExt, BigEndian};
 
@@ -142,7 +142,7 @@ impl Serialize for Value {
         where S: Serializer
     {
         match *self {
-            Value::Null => serializer.visit_unit(),
+            Value::Null => serializer.serialize_unit(),
             Value::Boolean(v) => v.serialize(serializer),
             Value::Integer(v) => v.serialize(serializer),
             Value::Float(v) => v.serialize(serializer),
@@ -166,11 +166,11 @@ impl Serialize for Value {
                     cur.write_u8(signature).unwrap();
                 }
                 // } else {
-                //     return Err(EncoderError::InvalidStructureLength)
+                //     return Err(DesErr::InvalidStructureLength)
                 // }
 
                 let data = cur.into_inner();
-                try!(serializer.visit_bytes(data.as_ref()));
+                try!(serializer.serialize_bytes(data.as_ref()));
 
                 for i in v.iter() {
                     try!(i.serialize(serializer));
@@ -249,49 +249,49 @@ impl<'a, T: Into<Value>> From<BTreeMap<&'a str, T>> for Value {
 #[cfg(test)]
 mod tests {
     use serde::{Serializer, Serialize};
-    use ::v1::packstream::serialize::encode;
+    use ::v1::packstream::serialize::serialize;
     use super::{Value, Map};
     use super::super::marker as m;
 
     #[test]
     fn serialize_null() {
-        assert_eq!(encode(&()).unwrap(), encode(&Value::Null).unwrap());
+        assert_eq!(serialize(&()).unwrap(), serialize(&Value::Null).unwrap());
     }
 
     #[test]
     fn serialize_bool() {
-        assert_eq!(encode(&true).unwrap(), encode(&Value::Boolean(true)).unwrap());
-        assert_eq!(encode(&false).unwrap(), encode(&Value::Boolean(false)).unwrap());
+        assert_eq!(serialize(&true).unwrap(), serialize(&Value::Boolean(true)).unwrap());
+        assert_eq!(serialize(&false).unwrap(), serialize(&Value::Boolean(false)).unwrap());
     }
 
     #[test]
     fn serialize_int() {
-        assert_eq!(encode(&-9_223_372_036_854_775_808_i64).unwrap(), encode(&Value::Integer(-9_223_372_036_854_775_808_i64)).unwrap());
-        assert_eq!(encode(&-2_147_483_648).unwrap(), encode(&Value::Integer(-2_147_483_648)).unwrap());
-        assert_eq!(encode(&-32_768).unwrap(), encode(&Value::Integer(-32_768)).unwrap());
-        assert_eq!(encode(&-128).unwrap(), encode(&Value::Integer(-128)).unwrap());
-        assert_eq!(encode(&127).unwrap(), encode(&Value::Integer(127)).unwrap());
-        assert_eq!(encode(&32_767).unwrap(), encode(&Value::Integer(32_767)).unwrap());
-        assert_eq!(encode(&2_147_483_647).unwrap(), encode(&Value::Integer(2_147_483_647)).unwrap());
-        assert_eq!(encode(&9_223_372_036_854_775_807_i64).unwrap(), encode(&Value::Integer(9_223_372_036_854_775_807_i64)).unwrap());
+        assert_eq!(serialize(&-9_223_372_036_854_775_808_i64).unwrap(), serialize(&Value::Integer(-9_223_372_036_854_775_808_i64)).unwrap());
+        assert_eq!(serialize(&-2_147_483_648).unwrap(), serialize(&Value::Integer(-2_147_483_648)).unwrap());
+        assert_eq!(serialize(&-32_768).unwrap(), serialize(&Value::Integer(-32_768)).unwrap());
+        assert_eq!(serialize(&-128).unwrap(), serialize(&Value::Integer(-128)).unwrap());
+        assert_eq!(serialize(&127).unwrap(), serialize(&Value::Integer(127)).unwrap());
+        assert_eq!(serialize(&32_767).unwrap(), serialize(&Value::Integer(32_767)).unwrap());
+        assert_eq!(serialize(&2_147_483_647).unwrap(), serialize(&Value::Integer(2_147_483_647)).unwrap());
+        assert_eq!(serialize(&9_223_372_036_854_775_807_i64).unwrap(), serialize(&Value::Integer(9_223_372_036_854_775_807_i64)).unwrap());
     }
 
     #[test]
     fn serialize_float() {
-        assert_eq!(encode(&1.1).unwrap(), encode(&Value::Float(1.1)).unwrap());
-        assert_eq!(encode(&-1.1).unwrap(), encode(&Value::Float(-1.1)).unwrap());
+        assert_eq!(serialize(&1.1).unwrap(), serialize(&Value::Float(1.1)).unwrap());
+        assert_eq!(serialize(&-1.1).unwrap(), serialize(&Value::Float(-1.1)).unwrap());
     }
 
     #[test]
     fn serialize_string() {
-        assert_eq!(encode(&"abc".to_owned()).unwrap(), encode(&Value::String("abc".to_owned())).unwrap());
-        assert_eq!(encode(&"abcdefghijklmnopqrstuvwxyz".to_owned()).unwrap(), encode(&Value::String("abcdefghijklmnopqrstuvwxyz".to_owned())).unwrap());
+        assert_eq!(serialize(&"abc".to_owned()).unwrap(), serialize(&Value::String("abc".to_owned())).unwrap());
+        assert_eq!(serialize(&"abcdefghijklmnopqrstuvwxyz".to_owned()).unwrap(), serialize(&Value::String("abcdefghijklmnopqrstuvwxyz".to_owned())).unwrap());
     }
 
     #[test]
     fn serialize_list() {
-        assert_eq!(encode(&vec![1; 15]).unwrap(), encode(&Value::List(vec![Value::Integer(1); 15])).unwrap());
-        assert_eq!(encode(&vec![1; 256]).unwrap(), encode(&Value::List(vec![Value::Integer(1); 256])).unwrap());
+        assert_eq!(serialize(&vec![1; 15]).unwrap(), serialize(&Value::List(vec![Value::Integer(1); 15])).unwrap());
+        assert_eq!(serialize(&vec![1; 256]).unwrap(), serialize(&Value::List(vec![Value::Integer(1); 256])).unwrap());
     }
 
     #[test]
@@ -299,10 +299,10 @@ mod tests {
         let closure = |mut acc: Map, i: i64| { acc.insert(format!("{}", i), Value::Integer(i)); acc };
 
         let input = (0..15).fold(Map::new(), &closure);
-        assert_eq!(encode(&input).unwrap(), encode(&Value::Map(input)).unwrap());
+        assert_eq!(serialize(&input).unwrap(), serialize(&Value::Map(input)).unwrap());
 
         let input = (0..256).fold(Map::new(), &closure);
-        assert_eq!(encode(&input).unwrap(), encode(&Value::Map(input)).unwrap());
+        assert_eq!(serialize(&input).unwrap(), serialize(&Value::Map(input)).unwrap());
     }
 
     #[test]
@@ -317,7 +317,7 @@ mod tests {
                 where S: Serializer
             {
                 let data = [m::TINY_STRUCT_NIBBLE | 0x02, 0x22];
-                try!(serializer.visit_bytes(&data));
+                try!(serializer.serialize_bytes(&data));
                 try!(self.name.serialize(serializer));
                 self.value.serialize(serializer)
             }
@@ -332,7 +332,7 @@ mod tests {
             0x22, vec![Value::String("MyStruct".to_owned()), Value::Integer(42)]
         );
 
-        assert_eq!(encode(&expected).unwrap(), encode(&input).unwrap());
+        assert_eq!(serialize(&expected).unwrap(), serialize(&input).unwrap());
     }
 
     #[test]

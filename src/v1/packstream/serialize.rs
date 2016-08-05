@@ -1,187 +1,230 @@
 use std::error::Error;
-use std::fmt;
-use std::io::prelude::*;
-use std::io::{self, Cursor};
-// use rustc_serialize::{Encodable, Encoder};
-use serde::{Serializer, Serialize};
-use serde::ser::{SeqVisitor, MapVisitor};
-use byteorder::{self, WriteBytesExt, BigEndian};
+use std::fmt::{self, Display, Formatter};
+use std::io;
 
-use super::marker as m;
-// use super::STRUCTURE_PREFIX;
+use byteorder::{WriteBytesExt, BigEndian};
+use serde::ser::{self, Serialize};
 
-pub fn encode<T: Serialize>(object: &T) -> EncodeResult<Vec<u8>> {
-    let mut buf = Cursor::new(Vec::new());
+use super::marker as M;
+use super::STRUCTURE_PREFIX;
+
+
+pub fn serialize<T: ser::Serialize>(value: &T) -> Result<Vec<u8>, SerializerError> {
+    let mut buf = io::Cursor::new(Vec::new());
     {
-        let mut encoder = PackstreamEncoder::new(&mut buf);
-        try!(object.serialize(&mut encoder));
+        let mut encoder = Serializer::new(&mut buf);
+        try!(value.serialize(&mut encoder));
     }
     Ok(buf.into_inner())
 }
 
 #[derive(Debug)]
-pub enum EncoderError {
-    EncodingError(byteorder::Error),
+pub enum SerializerError {
     IoError(io::Error),
     InvalidStructureLength,
+    Custom(String),
 }
 
-impl Error for EncoderError {
-    fn description(&self) -> &str { "encoder error" }
+impl Error for SerializerError {
+    fn description(&self) -> &str { "serializer error" }
 }
 
-impl fmt::Display for EncoderError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl ser::Error for SerializerError {
+    fn custom<T: Into<String>>(msg: T) -> Self {
+        SerializerError::Custom(msg.into())
+    }
+}
+
+impl Display for SerializerError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
     }
 }
 
-impl From<byteorder::Error> for EncoderError {
-    fn from(error: byteorder::Error) -> Self {
-        EncoderError::EncodingError(error)
-    }
-}
-
-impl From<io::Error> for EncoderError {
+impl From<io::Error> for SerializerError {
     fn from(error: io::Error) -> Self {
-        EncoderError::IoError(error)
+        SerializerError::IoError(error)
     }
 }
 
-pub type EncodeResult<T> = Result<T, EncoderError>;
-
-struct PackstreamEncoder<'a, W: Write + 'a> {
-    writer: &'a mut W,
+/// A structure for serializing Rust values into JSON.
+pub struct Serializer<W> {
+    writer: W,
 }
 
-impl<'a, W: Write> PackstreamEncoder<'a, W> {
-    pub fn new(writer: &'a mut W) -> Self {
-        PackstreamEncoder {
+impl<W> Serializer<W>
+    where W: io::Write,
+{
+    /// Creates a new PackStream serializer.
+    #[inline]
+    pub fn new(writer: W) -> Self {
+        Serializer {
             writer: writer,
         }
     }
+
+    /// Unwrap the `Writer` from the `Serializer`.
+    #[inline]
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
 }
 
-impl<'a, W: Write> Serializer for PackstreamEncoder<'a, W> {
-    type Error = EncoderError;
+#[doc(hidden)]
+#[derive(Eq, PartialEq)]
+pub enum State {
+    Empty,
+    First,
+    Rest,
+}
 
-    fn visit_bool(&mut self, v: bool) -> Result<(), Self::Error> {
-        if v {
-            try!(self.writer.write_u8(m::TRUE));
+#[doc(hidden)]
+#[derive(Eq, PartialEq)]
+pub enum StructState {
+    Map,
+    Structure,
+}
+
+impl<W> ser::Serializer for Serializer<W>
+    where W: io::Write,
+{
+    type Error = SerializerError;
+
+    type SeqState = State;
+    type TupleState = State;
+    type TupleStructState = State;
+    type TupleVariantState = State;
+    type MapState = State;
+    type StructState = StructState;
+    type StructVariantState = StructState;
+
+    #[inline]
+    fn serialize_bool(&mut self, value: bool) -> Result<(), Self::Error> {
+        if value {
+            self.writer.write_u8(M::TRUE).map_err(From::from)
         } else {
-            try!(self.writer.write_u8(m::FALSE));
+            self.writer.write_u8(M::FALSE).map_err(From::from)
+        }
+    }
+
+    #[inline]
+    fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
+        self.serialize_i64(value as i64)
+    }
+
+    #[inline]
+    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
+        self.serialize_i64(value as i64)
+    }
+
+    #[inline]
+    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
+        self.serialize_i64(value as i64)
+    }
+
+    #[inline]
+    fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
+        self.serialize_i64(value as i64)
+    }
+
+    #[inline]
+    fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
+        if (value >= M::RANGE_POS_INT_64.0 && value <= M::RANGE_POS_INT_64.1)
+            || (value >= M::RANGE_NEG_INT_64.0 && value <= M::RANGE_NEG_INT_64.1)
+        {
+            try!(self.writer.write_u8(M::INT_64));
+            try!(self.writer.write_i64::<BigEndian>(value));
+        } else if (value >= M::RANGE_POS_INT_32.0 && value <= M::RANGE_POS_INT_32.1)
+            || (value >= M::RANGE_NEG_INT_32.0 && value <= M::RANGE_NEG_INT_32.1)
+        {
+            try!(self.writer.write_u8(M::INT_32));
+            try!(self.writer.write_i32::<BigEndian>(value as i32));
+        } else if (value >= M::RANGE_POS_INT_16.0 && value <= M::RANGE_POS_INT_16.1)
+            || (value >= M::RANGE_NEG_INT_16.0 && value <= M::RANGE_NEG_INT_16.1)
+        {
+            try!(self.writer.write_u8(M::INT_16));
+            try!(self.writer.write_i16::<BigEndian>(value as i16));
+        } else if value >= M::RANGE_TINY_INT.0 && value <= M::RANGE_TINY_INT.1  {
+            try!(self.writer.write_i8(value as i8));
+        } else if value >= M::RANGE_NEG_INT_8.0 && value <= M::RANGE_NEG_INT_8.1 {
+            try!(self.writer.write_u8(M::INT_8));
+            try!(self.writer.write_i8(value as i8));
         }
 
         Ok(())
     }
 
-    fn visit_isize(&mut self, v: isize) -> Result<(), Self::Error> {
-        self.visit_i64(v as i64)
+    #[inline]
+    fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
+        self.serialize_u64(value as u64)
     }
 
-    fn visit_i8(&mut self, v: i8) -> Result<(), Self::Error> {
-        self.visit_i64(v as i64)
+    #[inline]
+    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
+        self.serialize_u64(value as u64)
     }
 
-    fn visit_i16(&mut self, v: i16) -> Result<(), Self::Error> {
-        self.visit_i64(v as i64)
+    #[inline]
+    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
+        self.serialize_u64(value as u64)
     }
 
-    fn visit_i32(&mut self, v: i32) -> Result<(), Self::Error> {
-        self.visit_i64(v as i64)
+    #[inline]
+    fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
+        self.serialize_u64(value as u64)
     }
 
-    fn visit_i64(&mut self, v: i64) -> Result<(), Self::Error> {
-        if (v >= m::RANGE_POS_INT_64.0 && v <= m::RANGE_POS_INT_64.1)
-            || (v >= m::RANGE_NEG_INT_64.0 && v <= m::RANGE_NEG_INT_64.1)
-        {
-            try!(self.writer.write_u8(m::INT_64));
-            try!(self.writer.write_i64::<BigEndian>(v));
-        } else if (v >= m::RANGE_POS_INT_32.0 && v <= m::RANGE_POS_INT_32.1)
-            || (v >= m::RANGE_NEG_INT_32.0 && v <= m::RANGE_NEG_INT_32.1)
-        {
-            try!(self.writer.write_u8(m::INT_32));
-            try!(self.writer.write_i32::<BigEndian>(v as i32));
-        } else if (v >= m::RANGE_POS_INT_16.0 && v <= m::RANGE_POS_INT_16.1)
-            || (v >= m::RANGE_NEG_INT_16.0 && v <= m::RANGE_NEG_INT_16.1)
-        {
-            try!(self.writer.write_u8(m::INT_16));
-            try!(self.writer.write_i16::<BigEndian>(v as i16));
-        } else if v >= m::RANGE_TINY_INT.0 && v <= m::RANGE_TINY_INT.1  {
-            try!(self.writer.write_i8(v as i8));
-        } else if v >= m::RANGE_NEG_INT_8.0 && v <= m::RANGE_NEG_INT_8.1 {
-            try!(self.writer.write_u8(m::INT_8));
-            try!(self.writer.write_i8(v as i8));
+    #[inline]
+    fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
+        if value >= M::RANGE_POS_INT_64.0 as u64 && value <= M::RANGE_POS_INT_64.1 as u64 {
+            try!(self.writer.write_u8(M::INT_64));
+            try!(self.writer.write_u64::<BigEndian>(value));
+        } else if value >= M::RANGE_POS_INT_32.0 as u64 && value <= M::RANGE_POS_INT_32.1 as u64 {
+            try!(self.writer.write_u8(M::INT_32));
+            try!(self.writer.write_u32::<BigEndian>(value as u32));
+        } else if value >= M::RANGE_POS_INT_16.0 as u64 && value <= M::RANGE_POS_INT_16.1 as u64 {
+            try!(self.writer.write_u8(M::INT_16));
+            try!(self.writer.write_u16::<BigEndian>(value as u16));
+        } else if value <= M::RANGE_TINY_INT.1 as u64 {
+            try!(self.writer.write_u8(value as u8));
         }
 
         Ok(())
     }
 
-    fn visit_usize(&mut self, v: usize) -> Result<(), Self::Error> {
-        self.visit_u64(v as u64)
+    #[inline]
+    fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
+        self.serialize_f64(value as f64)
     }
 
-    fn visit_u8(&mut self, v: u8) -> Result<(), Self::Error> {
-        self.visit_u64(v as u64)
+    #[inline]
+    fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
+        try!(self.writer.write_u8(M::FLOAT));
+        self.writer.write_f64::<BigEndian>(value).map_err(From::from)
     }
 
-    fn visit_u16(&mut self, v: u16) -> Result<(), Self::Error> {
-        self.visit_u64(v as u64)
+    #[inline]
+    fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
+        let mut string_value = String::new();
+        string_value.push(value);
+        self.serialize_str(&string_value)
     }
 
-    fn visit_u32(&mut self, v: u32) -> Result<(), Self::Error> {
-        self.visit_u64(v as u64)
-    }
-
-    fn visit_u64(&mut self, v: u64) -> Result<(), Self::Error> {
-        if v >= m::RANGE_POS_INT_64.0 as u64 && v <= m::RANGE_POS_INT_64.1 as u64 {
-            try!(self.writer.write_u8(m::INT_64));
-            try!(self.writer.write_u64::<BigEndian>(v));
-        } else if v >= m::RANGE_POS_INT_32.0 as u64 && v <= m::RANGE_POS_INT_32.1 as u64 {
-            try!(self.writer.write_u8(m::INT_32));
-            try!(self.writer.write_u32::<BigEndian>(v as u32));
-        } else if v >= m::RANGE_POS_INT_16.0 as u64 && v <= m::RANGE_POS_INT_16.1 as u64 {
-            try!(self.writer.write_u8(m::INT_16));
-            try!(self.writer.write_u16::<BigEndian>(v as u16));
-        } else if v <= m::RANGE_TINY_INT.1 as u64 {
-            try!(self.writer.write_u8(v as u8));
-        }
-
-        Ok(())
-    }
-
-    fn visit_f32(&mut self, v: f32) -> Result<(), Self::Error> {
-        self.visit_f64(v as f64)
-    }
-
-    fn visit_f64(&mut self, v: f64) -> Result<(), Self::Error> {
-        try!(self.writer.write_u8(m::FLOAT));
-        try!(self.writer.write_f64::<BigEndian>(v));
-
-        Ok(())
-    }
-
-    fn visit_char(&mut self, v: char) -> Result<(), Self::Error> {
-        try!(self.writer.write_u8(m::TINY_STRING_NIBBLE | 0x01));
-        try!(self.writer.write_u8(v as u8));
-
-        Ok(())
-    }
-
-    fn visit_str(&mut self, v: &str) -> Result<(), Self::Error> {
-        let bytes = v.as_bytes();
+    #[inline]
+    fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
+        let bytes = value.as_bytes();
         let size = bytes.len();
 
-        if size <= m::USE_TINY_STRING {
-            try!(self.writer.write_u8(m::TINY_STRING_NIBBLE | size as u8));
-        } else if size <= m::USE_STRING_8 {
-            try!(self.writer.write_u8(m::STRING_8));
+        if size <= M::USE_TINY_STRING {
+            try!(self.writer.write_u8(M::TINY_STRING_NIBBLE | size as u8));
+        } else if size <= M::USE_STRING_8 {
+            try!(self.writer.write_u8(M::STRING_8));
             try!(self.writer.write_u8(size as u8));
-        } else if size <= m::USE_STRING_16 {
-            try!(self.writer.write_u8(m::STRING_16));
+        } else if size <= M::USE_STRING_16 {
+            try!(self.writer.write_u8(M::STRING_16));
             try!(self.writer.write_u16::<BigEndian>(size as u16));
-        } else if size <= m::USE_STRING_32 {
-            try!(self.writer.write_u8(m::STRING_32));
+        } else if size <= M::USE_STRING_32 {
+            try!(self.writer.write_u8(M::STRING_32));
             try!(self.writer.write_u32::<BigEndian>(size as u32));
         }
 
@@ -190,168 +233,330 @@ impl<'a, W: Write> Serializer for PackstreamEncoder<'a, W> {
         Ok(())
     }
 
-    fn visit_bytes(&mut self, value: &[u8]) -> Result<(), Self::Error> {
-        let mut buf: Vec<u8> = value.iter().map(|v| *v).collect();
-        self.writer.write_all(&mut buf).map_err(From::from)
-    }
-
-    fn visit_unit(&mut self) -> Result<(), Self::Error> {
-        try!(self.writer.write_u8(m::NULL));
-        Ok(())
-    }
-
-    fn visit_unit_variant(&mut self,
-                          _name: &'static str,
-                          _variant_index: usize,
-                          variant: &'static str) -> Result<(), Self::Error> {
-
-        self.visit_str(variant)
-    }
-
-    fn visit_newtype_struct<T>(&mut self,
-                               _name: &'static str,
-                               value: T) -> Result<(), Self::Error>
-        where T: Serialize,
-    {
-        value.serialize(self)
-    }
-
-    fn visit_newtype_variant<T>(&mut self,
-                                _name: &'static str,
-                                _variant_index: usize,
-                                variant: &'static str,
-                                value: T) -> Result<(), Self::Error>
-        where T: Serialize,
-    {
-        try!(self.writer.write_u8(m::TINY_MAP_NIBBLE | 0x01));
-        try!(self.visit_str(variant));
-        value.serialize(self)
-    }
-
-    fn visit_none(&mut self) -> Result<(), Self::Error> {
-        self.visit_unit()
-    }
-
-    fn visit_some<V>(&mut self, value: V) -> Result<(), Self::Error>
-        where V: Serialize
-    {
-        value.serialize(self)
-    }
-
-    fn visit_seq<V>(&mut self, mut visitor: V) -> Result<(), Self::Error>
-        where V: SeqVisitor
-    {
-        let len = match visitor.len() {
-            Some(len) => len,
-            None => unimplemented!(),
-        };
-
-        if len <= m::USE_TINY_LIST as usize {
-            try!(self.writer.write_u8(m::TINY_LIST_NIBBLE | len as u8));
-        } else if len <= m::USE_LIST_8 as usize {
-            try!(self.writer.write_u8(m::LIST_8));
-            try!(self.writer.write_u8(len as u8));
-        } else if len <= m::USE_LIST_16 as usize {
-            try!(self.writer.write_u8(m::LIST_16));
-            try!(self.writer.write_u16::<BigEndian>(len as u16));
-        } else if len <= m::USE_LIST_32 as usize {
-            try!(self.writer.write_u8(m::LIST_32));
-            try!(self.writer.write_u32::<BigEndian>(len as u32));
+    #[inline]
+    fn serialize_bytes(&mut self, value: &[u8]) -> Result<(), Self::Error> {
+        let mut state = try!(self.serialize_seq(Some(value.len())));
+        for byte in value {
+            try!(self.serialize_seq_elt(&mut state, byte));
         }
-
-        while let Some(()) = try!(visitor.visit(self)) { }
-
-        Ok(())
+        self.serialize_seq_end(state)
     }
 
-    fn visit_seq_elt<T>(&mut self, value: T) -> Result<(), Self::Error>
-        where T: Serialize
+    #[inline]
+    fn serialize_unit(&mut self) -> Result<(), Self::Error> {
+        self.writer.write_u8(M::NULL).map_err(From::from)
+    }
+
+    #[inline]
+    fn serialize_unit_struct(&mut self, _name: &'static str) -> Result<(), Self::Error> {
+        self.serialize_unit()
+    }
+
+    #[inline]
+    fn serialize_unit_variant(
+        &mut self,
+        _name: &'static str,
+        _variant_index: usize,
+        variant: &'static str
+    ) -> Result<(), Self::Error> {
+        self.serialize_str(variant)
+    }
+
+    /// Serialize newtypes without an object wrapper.
+    #[inline]
+    fn serialize_newtype_struct<T>(
+        &mut self,
+        _name: &'static str,
+        value: T
+    ) -> Result<(), Self::Error>
+        where T: ser::Serialize,
     {
         value.serialize(self)
     }
 
-    fn visit_map<V>(&mut self, mut visitor: V) -> Result<(), Self::Error>
-        where V: MapVisitor
+    #[inline]
+    fn serialize_newtype_variant<T>(
+        &mut self,
+        _name: &'static str,
+        _variant_index: usize,
+        variant: &'static str,
+        value: T
+    ) -> Result<(), Self::Error>
+        where T: ser::Serialize,
     {
-        let len = match visitor.len() {
-            Some(len) => len,
-            None => unimplemented!(),
-        };
+        try!(self.writer.write_u8(M::TINY_MAP_NIBBLE | 0x01));
+        try!(self.serialize_str(variant));
+        value.serialize(self)
+    }
 
-        if len <= m::USE_TINY_MAP as usize {
-            try!(self.writer.write_u8(m::TINY_MAP_NIBBLE | len as u8));
-        } else if len <= m::USE_MAP_8 as usize {
-            try!(self.writer.write_u8(m::MAP_8));
-            try!(self.writer.write_u8(len as u8));
-        } else if len <= m::USE_MAP_16 as usize {
-            try!(self.writer.write_u8(m::MAP_16));
-            try!(self.writer.write_u16::<BigEndian>(len as u16));
-        } else if len <= m::USE_MAP_32 as usize {
-            try!(self.writer.write_u8(m::MAP_32));
-            try!(self.writer.write_u32::<BigEndian>(len as u32));
+    #[inline]
+    fn serialize_none(&mut self) -> Result<(), Self::Error> {
+        self.serialize_unit()
+    }
+
+    #[inline]
+    fn serialize_some<T>(&mut self, value: T) -> Result<(), Self::Error>
+        where T: ser::Serialize,
+    {
+        value.serialize(self)
+    }
+
+    #[inline]
+    fn serialize_seq(&mut self, len: Option<usize>) -> Result<State, Self::Error> {
+        match len {
+            Some(0) | None => {
+                try!(self.writer.write_u8(M::TINY_LIST_NIBBLE | 0x00));
+                Ok(State::Empty)
+            }
+            Some(len) => {
+                if len <= M::USE_TINY_LIST as usize {
+                    try!(self.writer.write_u8(M::TINY_LIST_NIBBLE | len as u8));
+                } else if len <= M::USE_LIST_8 as usize {
+                    try!(self.writer.write_u8(M::LIST_8));
+                    try!(self.writer.write_u8(len as u8));
+                } else if len <= M::USE_LIST_16 as usize {
+                    try!(self.writer.write_u8(M::LIST_16));
+                    try!(self.writer.write_u16::<BigEndian>(len as u16));
+                } else if len <= M::USE_LIST_32 as usize {
+                    try!(self.writer.write_u8(M::LIST_32));
+                    try!(self.writer.write_u32::<BigEndian>(len as u32));
+                }
+
+                Ok(State::First)
+            }
         }
-
-        while let Some(()) = try!(visitor.visit(self)) { }
-
-        Ok(())
     }
 
-    fn visit_map_elt<K, V>(&mut self, key: K, value: V) -> Result<(), Self::Error>
-        where K: Serialize,
-              V: Serialize
+    #[inline]
+    fn serialize_seq_elt<T: ser::Serialize>(
+        &mut self,
+        state: &mut State,
+        value: T
+    ) -> Result<(), Self::Error>
+        where T: ser::Serialize,
     {
-        try!(key.serialize(self));
+        *state = State::Rest;
+
         value.serialize(self)
     }
 
-    // fn visit_struct<V>(&mut self,
-    //                    name: &'static str,
-    //                    mut visitor: V) -> Result<(), Self::Error>
-    //     where V: MapVisitor
-    // {
-    //     let len = match visitor.len() {
-    //         Some(len) => len,
-    //         None => unimplemented!(),
-    //     };
-    //
-    //     if name.starts_with(STRUCTURE_PREFIX) {
-    //         debug_assert!(name.len() == STRUCTURE_PREFIX.len() + 1, "Invalid structure name: '{}'", name);
-    //         // it is garanteed that the name is not empty
-    //         let signature = *name.as_bytes().last().unwrap();
-    //
-    //         if len <= m::USE_TINY_STRUCT {
-    //             try!(self.writer.write_u8(m::TINY_STRUCT_NIBBLE | len as u8));
-    //             try!(self.writer.write_u8(signature));
-    //         } else if len <= m::USE_STRUCT_8 {
-    //             try!(self.writer.write_u8(m::STRUCT_8));
-    //             try!(self.writer.write_u8(signature));
-    //             try!(self.writer.write_u8(len as u8));
-    //         } else if len <= m::USE_STRUCT_16 {
-    //             try!(self.writer.write_u8(m::STRUCT_16));
-    //             try!(self.writer.write_u8(signature));
-    //             try!(self.writer.write_u16::<BigEndian>(len as u16));
-    //         } else {
-    //             return Err(EncoderError::InvalidStructureLength)
-    //         }
-    //
-    //         while let Some(()) = try!(visitor.visit(self)) { }
-    //
-    //         Ok(())
-    //     } else {
-    //         self.visit_map(visitor)
-    //     }
-    // }
+    #[inline]
+    fn serialize_seq_end(&mut self, _state: State) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
-    fn visit_struct_variant<V>(&mut self,
-                               _name: &'static str,
-                               _variant_index: usize,
-                               variant: &'static str,
-                               visitor: V) -> Result<(), Self::Error>
-        where V: MapVisitor,
-    {
-        try!(self.writer.write_u8(m::TINY_MAP_NIBBLE | 0x01));
-        try!(self.visit_str(variant));
-        self.visit_struct(variant, visitor)
+    #[inline]
+    fn serialize_seq_fixed_size(&mut self, size: usize) -> Result<State, Self::Error> {
+        self.serialize_seq(Some(size))
+    }
+
+    #[inline]
+    fn serialize_tuple(&mut self, len: usize) -> Result<State, Self::Error> {
+        self.serialize_seq(Some(len))
+    }
+
+    #[inline]
+    fn serialize_tuple_elt<T: ser::Serialize>(
+        &mut self,
+        state: &mut State,
+        value: T
+    ) -> Result<(), Self::Error> {
+        self.serialize_seq_elt(state, value)
+    }
+
+    #[inline]
+    fn serialize_tuple_end(&mut self, state: State) -> Result<(), Self::Error> {
+        self.serialize_seq_end(state)
+    }
+
+    #[inline]
+    fn serialize_tuple_struct(
+        &mut self,
+        _name: &'static str,
+        len: usize
+    ) -> Result<State, Self::Error> {
+        self.serialize_seq(Some(len))
+    }
+
+    #[inline]
+    fn serialize_tuple_struct_elt<T: ser::Serialize>(
+        &mut self,
+        state: &mut State,
+        value: T
+    ) -> Result<(), Self::Error> {
+        self.serialize_seq_elt(state, value)
+    }
+
+    #[inline]
+    fn serialize_tuple_struct_end(&mut self, state: State) -> Result<(), Self::Error> {
+        self.serialize_seq_end(state)
+    }
+
+    #[inline]
+    fn serialize_tuple_variant(
+        &mut self,
+        _name: &'static str,
+        _variant_index: usize,
+        variant: &'static str,
+        len: usize
+    ) -> Result<State, Self::Error> {
+        try!(self.serialize_map(Some(1)));
+        try!(self.serialize_str(variant));
+        self.serialize_seq(Some(len))
+    }
+
+    #[inline]
+    fn serialize_tuple_variant_elt<T: ser::Serialize>(
+        &mut self,
+        state: &mut State,
+        value: T
+    ) -> Result<(), Self::Error> {
+        self.serialize_seq_elt(state, value)
+    }
+
+    #[inline]
+    fn serialize_tuple_variant_end(&mut self, state: State) -> Result<(), Self::Error> {
+        self.serialize_seq_end(state)
+    }
+
+    #[inline]
+    fn serialize_map(&mut self, len: Option<usize>) -> Result<State, Self::Error> {
+        match len {
+            Some(0) | None => {
+                try!(self.writer.write_u8(M::TINY_MAP_NIBBLE | 0x00));
+                Ok(State::Empty)
+            }
+            Some(len) => {
+                if len <= M::USE_TINY_MAP as usize {
+                    try!(self.writer.write_u8(M::TINY_MAP_NIBBLE | len as u8));
+                } else if len <= M::USE_MAP_8 as usize {
+                    try!(self.writer.write_u8(M::MAP_8));
+                    try!(self.writer.write_u8(len as u8));
+                } else if len <= M::USE_MAP_16 as usize {
+                    try!(self.writer.write_u8(M::MAP_16));
+                    try!(self.writer.write_u16::<BigEndian>(len as u16));
+                } else if len <= M::USE_MAP_32 as usize {
+                    try!(self.writer.write_u8(M::MAP_32));
+                    try!(self.writer.write_u32::<BigEndian>(len as u32));
+                }
+
+                Ok(State::First)
+            }
+        }
+    }
+
+    #[inline]
+    fn serialize_map_key<T: ser::Serialize>(
+        &mut self,
+        state: &mut State,
+        key: T,
+    ) -> Result<(), Self::Error> {
+        *state = State::Rest;
+
+        key.serialize(self)
+    }
+
+    #[inline]
+    fn serialize_map_value<T: ser::Serialize>(
+        &mut self,
+        _: &mut State,
+        value: T,
+    ) -> Result<(), Self::Error> {
+        value.serialize(self)
+    }
+
+    #[inline]
+    fn serialize_map_end(&mut self, _state: State) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    #[inline]
+    fn serialize_struct(
+        &mut self,
+        name: &'static str,
+        len: usize
+    ) -> Result<Self::StructState, Self::Error> {
+        if name.starts_with(STRUCTURE_PREFIX) {
+            debug_assert!(
+                name.len() == STRUCTURE_PREFIX.len() + 1,
+                "Invalid structure name: '{}'",
+                name
+            );
+
+            let signature = *name.as_bytes().last().unwrap();
+
+            if len == 0 {
+                try!(self.writer.write_u8(M::TINY_STRUCT_NIBBLE | 0x00));
+                try!(self.writer.write_u8(signature));
+                Ok(StructState::Structure)
+            } else  {
+                if len <= M::USE_TINY_STRUCT {
+                    try!(self.writer.write_u8(M::TINY_STRUCT_NIBBLE | len as u8));
+                    try!(self.writer.write_u8(signature));
+                } else if len <= M::USE_STRUCT_8 {
+                    try!(self.writer.write_u8(M::STRUCT_8));
+                    try!(self.writer.write_u8(signature));
+                    try!(self.writer.write_u8(len as u8));
+                } else if len <= M::USE_STRUCT_16 {
+                    try!(self.writer.write_u8(M::STRUCT_16));
+                    try!(self.writer.write_u8(signature));
+                    try!(self.writer.write_u16::<BigEndian>(len as u16));
+                } else {
+                    return Err(SerializerError::InvalidStructureLength)
+                }
+
+                Ok(StructState::Structure)
+            }
+        } else {
+            try!(self.serialize_map(Some(len)));
+            Ok(StructState::Map)
+        }
+    }
+
+    #[inline]
+    fn serialize_struct_elt<V: ser::Serialize>(
+        &mut self,
+        state: &mut Self::StructState,
+        key: &'static str,
+        value: V
+    ) -> Result<(), Self::Error> {
+        if *state == StructState::Map {
+            try!(key.serialize(self));
+        }
+        value.serialize(self)
+    }
+
+    #[inline]
+    fn serialize_struct_end(&mut self, _state: Self::StructState) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    #[inline]
+    fn serialize_struct_variant(
+        &mut self,
+        name: &'static str,
+        _variant_index: usize,
+        variant: &'static str,
+        len: usize
+    ) -> Result<Self::StructVariantState, Self::Error> {
+        try!(self.serialize_map(Some(1)));
+        try!(self.serialize_str(variant));
+        self.serialize_struct(name, len)
+    }
+
+    #[inline]
+    fn serialize_struct_variant_elt<V: ser::Serialize>(
+        &mut self,
+        state: &mut Self::StructVariantState,
+        key: &'static str,
+        value: V
+    ) -> Result<(), Self::Error> {
+        self.serialize_struct_elt(state, key, value)
+    }
+
+    #[inline]
+    fn serialize_struct_variant_end(&mut self, state: Self::StructVariantState) -> Result<(), Self::Error> {
+        self.serialize_struct_end(state)
     }
 }
 
@@ -360,107 +565,106 @@ mod tests {
     use std::collections::BTreeMap;
     use std::string::String;
     use serde::{Serializer, Serialize};
-    use serde::ser::impls::MapIteratorVisitor;
 
-    use super::encode;
-    use ::v1::packstream::marker as m;
+    use super::{serialize, StructState};
+    use ::v1::packstream::marker as M;
 
     #[test]
     fn serialize_nil() {
         let input = ();
-        assert_eq!(vec![m::NULL], encode(&input).unwrap());
+        assert_eq!(vec![M::NULL], serialize(&input).unwrap());
 
         let input: Option<()> = None;
-        assert_eq!(vec![m::NULL], encode(&input).unwrap());
+        assert_eq!(vec![M::NULL], serialize(&input).unwrap());
     }
 
     #[test]
     fn serialize_bool() {
-        assert_eq!(vec![m::TRUE], encode(&true).unwrap());
-        assert_eq!(vec![m::FALSE], encode(&false).unwrap());
+        assert_eq!(vec![M::TRUE], serialize(&true).unwrap());
+        assert_eq!(vec![M::FALSE], serialize(&false).unwrap());
     }
 
     #[test]
     fn serialize_int64_positive() {
-        let result = encode(&m::RANGE_POS_INT_64.1).unwrap();
-        let expected = vec![m::INT_64, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        let result = serialize(&M::RANGE_POS_INT_64.1).unwrap();
+        let expected = vec![M::INT_64, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_int64_negative() {
-        let result = encode(&m::RANGE_NEG_INT_64.0).unwrap();
-        let expected = vec![m::INT_64, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let result = serialize(&M::RANGE_NEG_INT_64.0).unwrap();
+        let expected = vec![M::INT_64, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_int32_positive() {
-        let result = encode(&m::RANGE_POS_INT_32.1).unwrap();
-        let expected = vec![m::INT_32, 0x7F, 0xFF, 0xFF, 0xFF];
+        let result = serialize(&M::RANGE_POS_INT_32.1).unwrap();
+        let expected = vec![M::INT_32, 0x7F, 0xFF, 0xFF, 0xFF];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_int32_negative() {
-        let result = encode(&m::RANGE_NEG_INT_32.0).unwrap();
-        let expected = vec![m::INT_32, 0x80, 0x00, 0x00, 0x00];
+        let result = serialize(&M::RANGE_NEG_INT_32.0).unwrap();
+        let expected = vec![M::INT_32, 0x80, 0x00, 0x00, 0x00];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_int16_positive() {
-        let result = encode(&m::RANGE_POS_INT_16.1).unwrap();
-        let expected = vec![m::INT_16, 0x7F, 0xFF];
+        let result = serialize(&M::RANGE_POS_INT_16.1).unwrap();
+        let expected = vec![M::INT_16, 0x7F, 0xFF];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_int16_negative() {
-        let result = encode(&m::RANGE_NEG_INT_16.0).unwrap();
-        let expected = vec![m::INT_16, 0x80, 0x00];
+        let result = serialize(&M::RANGE_NEG_INT_16.0).unwrap();
+        let expected = vec![M::INT_16, 0x80, 0x00];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_int8_min() {
-        let result = encode(&m::RANGE_NEG_INT_8.0).unwrap();
-        let expected = vec![m::INT_8, 0x80];
+        let result = serialize(&M::RANGE_NEG_INT_8.0).unwrap();
+        let expected = vec![M::INT_8, 0x80];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_int8_max() {
-        let result = encode(&m::RANGE_NEG_INT_8.1).unwrap();
-        let expected = vec![m::INT_8, 0xEF];
+        let result = serialize(&M::RANGE_NEG_INT_8.1).unwrap();
+        let expected = vec![M::INT_8, 0xEF];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_tiny_int_min() {
-        let result = encode(&m::RANGE_TINY_INT.0).unwrap();
+        let result = serialize(&M::RANGE_TINY_INT.0).unwrap();
         let expected = vec![0xF0];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_tiny_int_max() {
-        let result = encode(&m::RANGE_TINY_INT.1).unwrap();
+        let result = serialize(&M::RANGE_TINY_INT.1).unwrap();
         let expected = vec![0x7F];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_float_positive() {
-        let result = encode(&1.1).unwrap();
-        let expected = vec![m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A];
+        let result = serialize(&1.1).unwrap();
+        let expected = vec![M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A];
         assert_eq!(expected, result);
     }
 
     #[test]
     fn serialize_float_negative() {
-        let result = encode(&-1.1).unwrap();
-        let expected = vec![m::FLOAT, 0xBF, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A];
+        let result = serialize(&-1.1).unwrap();
+        let expected = vec![M::FLOAT, 0xBF, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A];
         assert_eq!(expected, result);
     }
 
@@ -469,9 +673,9 @@ mod tests {
         let size = 70_000;
         let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
-        let result = encode(&input).unwrap();
+        let result = serialize(&input).unwrap();
         let expected = (0..size).fold(
-            vec![m::STRING_32, 0x00, 0x01, 0x11, 0x70],
+            vec![M::STRING_32, 0x00, 0x01, 0x11, 0x70],
             |mut acc, _| { acc.push(b'A'); acc }
         );
 
@@ -483,9 +687,9 @@ mod tests {
         let size = 5_000;
         let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
-        let result = encode(&input).unwrap();
+        let result = serialize(&input).unwrap();
         let expected = (0..size).fold(
-            vec![m::STRING_16, 0x13, 0x88],
+            vec![M::STRING_16, 0x13, 0x88],
             |mut acc, _| { acc.push(b'A'); acc }
         );
 
@@ -497,9 +701,9 @@ mod tests {
         let size = 200;
         let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
-        let result = encode(&input).unwrap();
+        let result = serialize(&input).unwrap();
         let expected = (0..size).fold(
-            vec![m::STRING_8, 0xC8],
+            vec![M::STRING_8, 0xC8],
             |mut acc, _| { acc.push(b'A'); acc }
         );
 
@@ -509,10 +713,10 @@ mod tests {
     #[test]
     fn serialize_tiny_string() {
         for marker in 0x80..0x8F {
-            let size = marker - m::TINY_STRING_NIBBLE;
+            let size = marker - M::TINY_STRING_NIBBLE;
             let input = (0..size).fold(String::new(), |mut acc, _| { acc.push('A'); acc });
 
-            let result = encode(&input).unwrap();
+            let result = serialize(&input).unwrap();
             let expected = (0..size).fold(
                 vec![marker],
                 |mut acc, _| { acc.push(b'A'); acc }
@@ -525,7 +729,7 @@ mod tests {
     #[test]
     fn serialize_char() {
         for c in b'A'..b'Z' {
-            let result: Vec<u8> = encode(&(c as char)).unwrap();
+            let result: Vec<u8> = serialize(&(c as char)).unwrap();
             let expected = vec![0x81, c];
 
             assert_eq!(expected, result);
@@ -537,9 +741,9 @@ mod tests {
         let size = 70_000;
         let input = vec![1; size];
 
-        let result = encode(&input).unwrap();
+        let result = serialize(&input).unwrap();
         let expected = (0..size).fold(
-            vec![m::LIST_32, 0x00, 0x01, 0x11, 0x70],
+            vec![M::LIST_32, 0x00, 0x01, 0x11, 0x70],
             |mut acc, _| { acc.push(0x01); acc }
         );
 
@@ -551,9 +755,9 @@ mod tests {
         let size = 5_000;
         let input = vec![1; size];
 
-        let result = encode(&input).unwrap();
+        let result = serialize(&input).unwrap();
         let expected = (0..size).fold(
-            vec![m::LIST_16, 0x13, 0x88],
+            vec![M::LIST_16, 0x13, 0x88],
             |mut acc, _| { acc.push(0x01); acc }
         );
 
@@ -565,9 +769,9 @@ mod tests {
         let size = 200;
         let input = vec![1; size];
 
-        let result = encode(&input).unwrap();
+        let result = serialize(&input).unwrap();
         let expected = (0..size).fold(
-            vec![m::LIST_8, 0xC8],
+            vec![M::LIST_8, 0xC8],
             |mut acc, _| { acc.push(0x01); acc }
         );
 
@@ -577,10 +781,10 @@ mod tests {
     #[test]
     fn serialize_tiny_list() {
         for marker in 0x90..0x9F {
-            let size = (marker - m::TINY_LIST_NIBBLE) as usize;
+            let size = (marker - M::TINY_LIST_NIBBLE) as usize;
             let input = vec![1; size];
 
-            let result = encode(&input).unwrap();
+            let result = serialize(&input).unwrap();
             let expected = (0..size).fold(
                 vec![marker],
                 |mut acc, _| { acc.push(0x01); acc }
@@ -595,17 +799,17 @@ mod tests {
         let size = 3;
         let input = vec!["abcdefghijklmnopqrstuvwxyz"; size];
 
-        let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
-                            m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+        let result = serialize(&input).unwrap();
+        let expected = vec![M::TINY_LIST_NIBBLE + size as u8,
+                            M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                             0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                             0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                             0x77, 0x78, 0x79, 0x7A,
-                            m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                            M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                             0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                             0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                             0x77, 0x78, 0x79, 0x7A,
-                            m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                            M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                             0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                             0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                             0x77, 0x78, 0x79, 0x7A];
@@ -618,11 +822,11 @@ mod tests {
         let size = 3;
         let input = vec![32_000; size];
 
-        let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
-                            m::INT_16, 0x7D, 0x00,
-                            m::INT_16, 0x7D, 0x00,
-                            m::INT_16, 0x7D, 0x00];
+        let result = serialize(&input).unwrap();
+        let expected = vec![M::TINY_LIST_NIBBLE + size as u8,
+                            M::INT_16, 0x7D, 0x00,
+                            M::INT_16, 0x7D, 0x00,
+                            M::INT_16, 0x7D, 0x00];
 
         assert_eq!(expected, result);
     }
@@ -632,11 +836,11 @@ mod tests {
         let size = 3;
         let input = vec![1.1; size];
 
-        let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
-                            m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                            m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                            m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A];
+        let result = serialize(&input).unwrap();
+        let expected = vec![M::TINY_LIST_NIBBLE + size as u8,
+                            M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                            M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                            M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A];
 
         assert_eq!(expected, result);
     }
@@ -646,9 +850,9 @@ mod tests {
         let size = 4;
         let input = vec![true, false, true, false];
 
-        let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
-                            m::TRUE, m::FALSE, m::TRUE, m::FALSE];
+        let result = serialize(&input).unwrap();
+        let expected = vec![M::TINY_LIST_NIBBLE + size as u8,
+                            M::TRUE, M::FALSE, M::TRUE, M::FALSE];
 
         assert_eq!(expected, result);
     }
@@ -658,11 +862,11 @@ mod tests {
         let size = 3;
         let input = (1, 1.1, "A");
 
-        let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_LIST_NIBBLE + size as u8,
+        let result = serialize(&input).unwrap();
+        let expected = vec![M::TINY_LIST_NIBBLE + size as u8,
                             0x01,
-                            m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                            m::TINY_STRING_NIBBLE + 1, 0x41];
+                            M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                            M::TINY_STRING_NIBBLE + 1, 0x41];
 
         assert_eq!(expected, result);
     }
@@ -675,9 +879,9 @@ mod tests {
             |mut acc, i| { acc.insert(format!("{:05}", i), 1); acc }
         );
 
-        let result = encode(&input).unwrap();
+        let result = serialize(&input).unwrap();
         let expected = (0..size).fold(
-            vec![m::MAP_32, 0x00, 0x01, 0x11, 0x70],
+            vec![M::MAP_32, 0x00, 0x01, 0x11, 0x70],
             |mut acc, i| {
                 let b1 = 48 + ((i % 100000) / 10000) as u8;
                 let b2 = 48 + ((i % 10000) / 1000) as u8;
@@ -700,9 +904,9 @@ mod tests {
             |mut acc, i| { acc.insert(format!("{:04}", i), 1); acc }
         );
 
-        let result = encode(&input).unwrap();
+        let result = serialize(&input).unwrap();
         let expected = (0..size).fold(
-            vec![m::MAP_16, 0x13, 0x88],
+            vec![M::MAP_16, 0x13, 0x88],
             |mut acc, i| {
                 let b1 = 48 + ((i % 10000) / 1000) as u8;
                 let b2 = 48 + ((i % 1000) / 100) as u8;
@@ -724,9 +928,9 @@ mod tests {
             |mut acc, i| { acc.insert(format!("{:03}", i), 1); acc }
         );
 
-        let result = encode(&input).unwrap();
+        let result = serialize(&input).unwrap();
         let expected = (0..size).fold(
-            vec![m::MAP_8, 0xC8],
+            vec![M::MAP_8, 0xC8],
             |mut acc, i| {
                 let b1 = 48 + ((i % 1000) / 100) as u8;
                 let b2 = 48 + ((i % 100) / 10) as u8;
@@ -747,9 +951,9 @@ mod tests {
             |mut acc, i| { acc.insert(format!("{}", i), 1); acc }
         );
 
-        let result = encode(&input).unwrap();
+        let result = serialize(&input).unwrap();
         let expected = (0..size).fold(
-            vec![m::TINY_MAP_NIBBLE + size],
+            vec![M::TINY_MAP_NIBBLE + size],
             |mut acc, i| {
                 acc.extend([0x81, 0x30 + i].iter());
                 acc.push(0x01);
@@ -771,20 +975,20 @@ mod tests {
             input
         };
 
-        let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_MAP_NIBBLE + size,
+        let result = serialize(&input).unwrap();
+        let expected = vec![M::TINY_MAP_NIBBLE + size,
                             0x81, 0x41,
-                            m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                            M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                             0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                             0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                             0x77, 0x78, 0x79, 0x7A,
                             0x81, 0x42,
-                            m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                            M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                             0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                             0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                             0x77, 0x78, 0x79, 0x7A,
                             0x81, 0x43,
-                            m::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+                            M::STRING_8, 0x1A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
                             0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E,
                             0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76,
                             0x77, 0x78, 0x79, 0x7A];
@@ -803,11 +1007,11 @@ mod tests {
             input
         };
 
-        let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_MAP_NIBBLE + size,
-                            0x81, 0x41, m::INT_16, 0x7D, 0x00,
-                            0x81, 0x42, m::INT_16, 0x7D, 0x00,
-                            0x81, 0x43, m::INT_16, 0x7D, 0x00];
+        let result = serialize(&input).unwrap();
+        let expected = vec![M::TINY_MAP_NIBBLE + size,
+                            0x81, 0x41, M::INT_16, 0x7D, 0x00,
+                            0x81, 0x42, M::INT_16, 0x7D, 0x00,
+                            0x81, 0x43, M::INT_16, 0x7D, 0x00];
 
         assert_eq!(expected, result);
     }
@@ -823,11 +1027,11 @@ mod tests {
             input
         };
 
-        let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_MAP_NIBBLE + size,
-                            0x81, 0x41, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                            0x81, 0x42, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
-                            0x81, 0x43, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A];
+        let result = serialize(&input).unwrap();
+        let expected = vec![M::TINY_MAP_NIBBLE + size,
+                            0x81, 0x41, M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                            0x81, 0x42, M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                            0x81, 0x43, M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A];
 
         assert_eq!(expected, result);
     }
@@ -844,12 +1048,12 @@ mod tests {
             input
         };
 
-        let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_MAP_NIBBLE + size,
-                            0x81, 0x41, m::TRUE,
-                            0x81, 0x42, m::FALSE,
-                            0x81, 0x43, m::TRUE,
-                            0x81, 0x44, m::FALSE];
+        let result = serialize(&input).unwrap();
+        let expected = vec![M::TINY_MAP_NIBBLE + size,
+                            0x81, 0x41, M::TRUE,
+                            0x81, 0x42, M::FALSE,
+                            0x81, 0x43, M::TRUE,
+                            0x81, 0x44, M::FALSE];
 
         assert_eq!(expected, result);
     }
@@ -928,9 +1132,9 @@ mod tests {
     //         A249: 1, A250: 1, A251: 1, A252: 1, A253: 1, A254: 1, A255: 1, A256: 1,
     //     };
     //
-    //     let result = encode(&input).unwrap();
+    //     let result = serialize(&input).unwrap();
     //
-    //     let expected = vec![m::MAP_16, 0x01, 0x00,
+    //     let expected = vec![M::MAP_16, 0x01, 0x00,
     //         0x84, 0x41, 0x30, 0x30, 0x31, 0x01, 0x84, 0x41, 0x30, 0x30, 0x32, 0x01, 0x84, 0x41, 0x30, 0x30, 0x33, 0x01, 0x84, 0x41, 0x30, 0x30, 0x34, 0x01, 0x84, 0x41, 0x30, 0x30, 0x35, 0x01, 0x84, 0x41, 0x30, 0x30, 0x36, 0x01, 0x84, 0x41, 0x30, 0x30, 0x37, 0x01, 0x84, 0x41, 0x30, 0x30, 0x38, 0x01,
     //         0x84, 0x41, 0x30, 0x30, 0x39, 0x01, 0x84, 0x41, 0x30, 0x31, 0x30, 0x01, 0x84, 0x41, 0x30, 0x31, 0x31, 0x01, 0x84, 0x41, 0x30, 0x31, 0x32, 0x01, 0x84, 0x41, 0x30, 0x31, 0x33, 0x01, 0x84, 0x41, 0x30, 0x31, 0x34, 0x01, 0x84, 0x41, 0x30, 0x31, 0x35, 0x01, 0x84, 0x41, 0x30, 0x31, 0x36, 0x01,
     //         0x84, 0x41, 0x30, 0x31, 0x37, 0x01, 0x84, 0x41, 0x30, 0x31, 0x38, 0x01, 0x84, 0x41, 0x30, 0x31, 0x39, 0x01, 0x84, 0x41, 0x30, 0x32, 0x30, 0x01, 0x84, 0x41, 0x30, 0x32, 0x31, 0x01, 0x84, 0x41, 0x30, 0x32, 0x32, 0x01, 0x84, 0x41, 0x30, 0x32, 0x33, 0x01, 0x84, 0x41, 0x30, 0x32, 0x34, 0x01,
@@ -988,8 +1192,8 @@ mod tests {
     //         M: 1, N: 1, O: 1, P: 1,
     //     };
     //
-    //     let result = encode(&input).unwrap();
-    //     let expected = vec![m::MAP_8, size,
+    //     let result = serialize(&input).unwrap();
+    //     let expected = vec![M::MAP_8, size,
     //                         0x81, 0x41, 0x01, 0x81, 0x42, 0x01, 0x81, 0x43, 0x01, 0x81, 0x44, 0x01,
     //                         0x81, 0x45, 0x01, 0x81, 0x46, 0x01, 0x81, 0x47, 0x01, 0x81, 0x48, 0x01,
     //                         0x81, 0x49, 0x01, 0x81, 0x4A, 0x01, 0x81, 0x4B, 0x01, 0x81, 0x4C, 0x01,
@@ -1005,34 +1209,40 @@ mod tests {
         let size = 3;
 
         #[allow(non_snake_case)]
+        #[derive(Serialize)]
         struct MyStruct {
             A: u32,
             B: f64,
             C: &'static str,
         }
 
-        impl Serialize for MyStruct {
-            fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
-                where S: Serializer
-            {
-                let data = vec![("A", Value::Integer(self.A as i64)), ("B", Value::Float(self.B)), ("C", Value::String(self.C.to_owned()))];
-                let visitor = MapIteratorVisitor::new(
-                    data.into_iter(),
-                    Some(3)
-                );
-
-                serializer.visit_struct("MyStruct", visitor)
-            }
-        }
+        // impl Serialize for MyStruct {
+        //     fn serialize<S>(&self, serializer: &mut super::Serializer<R>) -> Result<(), S::Error>
+        //         where S: Serializer
+        //     {
+        //         // let data = vec![("A", Value::Integer(self.A as i64)), ("B", Value::Float(self.B)), ("C", Value::String(self.C.to_owned()))];
+        //         // let visitor = MapIteratorVisitor::new(
+        //         //     data.into_iter(),
+        //         //     Some(3)
+        //         // );
+        //
+        //
+        //         serializer.serialize_struct("MyStruct", 3).unwrap();
+        //         serializer.serialize_struct_elt(&mut StructState::Structure.as_mut(), "A", self.A).unwrap();
+        //         serializer.serialize_struct_elt(&mut StructState::Structure.as_mut(), "B", self.B).unwrap();
+        //         serializer.serialize_struct_elt(&mut StructState::Structure.as_mut(), "C", self.C).unwrap();
+        //         serializer.serialize_struct_end(&mut StructState::Structure.as_mut()).unwrap();
+        //     }
+        // }
 
         let input = MyStruct {
             A: 1, B: 1.1, C: "C",
         };
 
-        let result = encode(&input).unwrap();
-        let expected = vec![m::TINY_MAP_NIBBLE + size,
+        let result = serialize(&input).unwrap();
+        let expected = vec![M::TINY_MAP_NIBBLE + size,
                             0x81, 0x41, 0x01,
-                            0x81, 0x42, m::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
+                            0x81, 0x42, M::FLOAT, 0x3F, 0xF1, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9A,
                             0x81, 0x43, 0x81, 0x43];
 
         assert_eq!(expected, result);
@@ -1045,9 +1255,9 @@ mod tests {
     //         A,
     //     }
     //
-    //     let input = MyEnum::A;
+    //     let input = MyEnuM::A;
     //
-    //     let result = encode(&input).unwrap();
+    //     let result = serialize(&input).unwrap();
     //     let expected = vec![0x81, 0x41];
     //
     //     assert_eq!(expected, result);
@@ -1060,10 +1270,10 @@ mod tests {
     //         A(u16, u16),
     //     }
     //
-    //     let input = MyEnum::A(1, 2);
+    //     let input = MyEnuM::A(1, 2);
     //
-    //     let result = encode(&input).unwrap();
-    //     let expected = vec![m::TINY_MAP_NIBBLE + 0x01,
+    //     let result = serialize(&input).unwrap();
+    //     let expected = vec![M::TINY_MAP_NIBBLE + 0x01,
     //                         0x81, 0x41,
     //                         0x92, 0x01, 0x02];
     //
@@ -1080,10 +1290,10 @@ mod tests {
     //         A { A: u16, B: u16 },
     //     }
     //
-    //     let input = MyEnum::A { A: 1, B: 2 };
+    //     let input = MyEnuM::A { A: 1, B: 2 };
     //
-    //     let result = encode(&input).unwrap();
-    //     let expected = vec![m::TINY_MAP_NIBBLE + size,
+    //     let result = serialize(&input).unwrap();
+    //     let expected = vec![M::TINY_MAP_NIBBLE + size,
     //                         0x81, 0x41, 0x01,
     //                         0x81, 0x42, 0x02];
     //
