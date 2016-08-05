@@ -87,3 +87,43 @@ impl<'a, R: Read + 'a> de::MapVisitor for MapVisitor<'a, R> {
         Ok(())
     }
 }
+
+// pub struct VariantVisitor<'a, R: Read + 'a> {
+//     de: &'a mut Deserializer<R>,
+//     current: usize,
+// }
+//
+// impl<'a, R: Read> VariantVisitor<'a, R> {
+//     pub fn new(de: &'a mut Deserializer<R>) -> Self {
+//         VariantVisitor {
+//             de: de,
+//             current: 0
+//         }
+//     }
+// }
+//
+// impl<'a, R: Read> de::VariantVisitor for VariantVisitor<'a, R> {
+//     type Error = DesErr;
+//
+//     fn visit_variant<V>(&mut self) -> Result<V, Self::Error> where V: de::Deserialize {
+//
+//     }
+//
+//     fn visit_newtype<T>(&mut self) -> Result<T, Self::Error> where T: de::Deserialize {
+//
+//     }
+//
+//     fn visit_tuple<V>(&mut self, len: usize, visitor: V)
+//         -> Result<V::Value, Self::Error>
+//         where V: de::Visitor
+//     {
+//
+//     }
+//
+//     fn visit_struct<V>(&mut self, fields: &'static [&'static str], visitor: V)
+//         -> Result<V::Value, Self::Error>
+//         where V: de::Visitor
+//     {
+//
+//     }
+// }

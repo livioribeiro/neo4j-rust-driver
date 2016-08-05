@@ -30,9 +30,9 @@ pub fn is_int64_or_lesser(b: u8) -> bool {
     b == M::INT_64 || is_int32_or_lesser(b)
 }
 
-// pub fn is_string(b: u8) -> bool {
-//     is_tiny_string(b) || b == M::STRING_8
-//         || b == M::STRING_16 || b == M::STRING_32
+// pub fn is_list(b: u8) -> bool {
+//     is_tiny_list(b) || b == M::LIST_8
+//         || b == M::LIST_16 || b == M::LIST_32
 // }
 //
 // pub fn is_map(b: u8) -> bool {
@@ -42,6 +42,11 @@ pub fn is_int64_or_lesser(b: u8) -> bool {
 //
 // pub fn is_structure(b: u8) -> bool {
 //     is_tiny_structure(b) || b == M::STRUCT_8 || b == M::STRUCT_16
+// }
+//
+// pub fn is_string(b: u8) -> bool {
+//     is_tiny_string(b) || b == M::STRING_8
+//         || b == M::STRING_16 || b == M::STRING_32
 // }
 
 pub fn which(byte: u8) -> Option<&'static str> {
